@@ -49,7 +49,8 @@ export function Upload({ onReady }: { onReady: (p: Demo) => void }) {
         <div style={{ overflowX: 'auto' }}><table><thead><tr>{info.preview.header.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>
           {info.preview.rows.map((r, i) => <tr key={i}>{r.map((c, k) => <td key={k}>{c ?? <span className="muted">(missing)</span>}</td>)}</tr>)}</tbody></table></div>
         <div className="row"><label>Project name<input value={name} onChange={(e) => setName(e.target.value)} /></label></div>
-        <label>Case and construct description (paste from your article; optional but recommended)<textarea rows={4} value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
+        <label>Phenomenon and cases (paste from your article)<textarea rows={7} value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
+        <p className="muted">This text is the context every agent reads, and the basis for choosing stakeholder roles. Describe who or what the cases are, the setting and period, how the outcome shows up in practice, and what the decision or process involves. Do <b>not</b> include your findings, hypotheses or which combinations matter: the agents should not know the answer. ({desc.trim().length} characters; a few paragraphs works best.)</p>
         <h3 style={{ marginTop: 14 }}>Choose the outcome and conditions</h3>
         <p className="muted">Columns such as case names or IDs are simply left unticked. Give each chosen variable its construct definition and measurement instrument: without them an agent only sees numbers and tends to return a percentile rule. Original anchors and cutoffs are optional, but the mechanical source and the comparison with your published solution need them.</p>
         {info.columns.map((c) => { const v = cols[c.name]; if (!v) return null

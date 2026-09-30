@@ -47,6 +47,17 @@ def prompt_warnings(variables: list[VariableSpec]) -> list[str]:
     return out
 
 
+def case_description_warnings(text: str) -> list[str]:
+    """A thin description gives agents (and the role-derivation step) little to reason from."""
+    n = len(text.strip())
+    if n == 0:
+        return ["case description is empty: agents will not know who or what the cases are"]
+    if n < 400:
+        return [f"case description is short ({n} characters): say who or what the cases are, the setting and period, "
+                "how the outcome shows up in practice, and what the decision or process involves"]
+    return []
+
+
 def _histogram_text(stats: dict[str, Any]) -> str:
     return "; ".join(f"{b['lower']} to {b['upper']}: {b['count']}" for b in stats["histogram"])
 

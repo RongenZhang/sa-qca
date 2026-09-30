@@ -222,12 +222,13 @@ def get_project(session: Any, pid: str) -> dict[str, Any]:
 
 
 def project_summary(d: dict[str, Any]) -> dict[str, Any]:
-    from app.domain.prompt import prompt_warnings
+    from app.domain.prompt import case_description_warnings, prompt_warnings
 
     return {
         "id": d["id"], "name": d["name"], "case_description": d["project"]["case_description"],
         "variables": [v.__dict__ for v in d["variables"]], "reference": d["reference"],
         "reference_cutoffs": d["reference_cutoffs"], "dir_exp": d["dir_exp"], "has_reference": d["has_reference"],
-        "warnings": prompt_warnings(d["variables"]), "n_cases": d["n_cases"], "n_dropped": d["n_dropped"],
+        "warnings": [*prompt_warnings(d["variables"]), *case_description_warnings(d["project"]["case_description"])],
+        "demo_note": d["project"].get("demo_note", ""), "n_cases": d["n_cases"], "n_dropped": d["n_dropped"],
         "is_demo": d["id"] == "demo",
     }
