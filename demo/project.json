@@ -1,0 +1,25 @@
+{
+  "name": "Demo: technology adoption in small firms (synthetic)",
+  "case_description": "Synthetic data for exploring the tool. Sixty small firms are described by managerial trust in the vendor, support from top management, available resources, and the degree to which a new system was adopted.",
+  "variables": [
+    {"name": "TRUST", "role": "condition", "direction": "positive", "dir_exp": 1, "units": "1-7 scale",
+     "construct_definition": "Managerial trust in the technology vendor.",
+     "instrument": "Mean of four 7-point Likert items (1 = strongly disagree, 7 = strongly agree)."},
+    {"name": "SUPPORT", "role": "condition", "direction": "positive", "dir_exp": 1, "units": "1-7 scale",
+     "construct_definition": "Perceived top-management support for the system.",
+     "instrument": "Mean of three 7-point Likert items (1 = strongly disagree, 7 = strongly agree)."},
+    {"name": "RESOURCES", "role": "condition", "direction": "positive", "dir_exp": 1, "units": "index 0-100",
+     "construct_definition": "Slack resources available for implementation.",
+     "instrument": "Composite index of budget, staff time and training capacity, scaled 0-100."},
+    {"name": "ADOPTION", "role": "outcome", "direction": "positive", "units": "index 0-100",
+     "construct_definition": "Extent to which the system is used in daily operations.",
+     "instrument": "Usage index scaled 0-100."}
+  ],
+  "reference_spec": {
+    "TRUST": {"full_non_membership": 2.5, "crossover": 4.0, "full_membership": 5.5},
+    "SUPPORT": {"full_non_membership": 2.0, "crossover": 4.0, "full_membership": 6.0},
+    "RESOURCES": {"full_non_membership": 25, "crossover": 50, "full_membership": 75},
+    "ADOPTION": {"full_non_membership": 25, "crossover": 50, "full_membership": 75},
+    "truth_table": {"consistency_threshold": 0.8, "frequency_threshold": 1, "pri_threshold": 0.5}
+  }
+}
