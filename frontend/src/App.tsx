@@ -29,6 +29,7 @@ export default function App() {
   const [approval, setApproval] = usePersisted<{ roles_hash: string; approved_by: string; approved_at: string; snapshot: string } | null>('approval', null)
   const [design, setDesign] = usePersisted<RunReq>('design', { project_id: 'demo', role_set_hash: '', arms: { roles: [], generic: true, mechanical: true }, reps: 3, provider: 'demo-mock', model: 'demo-mock-1', temperature: null, tolerance: 0, spend_cap: null, price_in: null, price_out: null })
   const [apiKey, setApiKey] = useState('') // memory only; never persisted
+  const [workspaceId, setWorkspaceId] = useState('')
   const [runId, setRunId] = usePersisted<number | null>('runId', null)
   const [status, setStatus] = useState<Status | null>(null)
   const [results, setResults] = useState<Results | null>(null)
@@ -61,8 +62,8 @@ export default function App() {
         {!demo ? <p>Loading…</p> : <>
           {step === 0 && <Step1 demo={demo} expert={expert} onProject={switchProject} />}
           {step === 1 && <Step2 roles={roles} setRoles={setRoles} approval={approval} approved={approved} onApprove={async (by) => { try { const a = await api.approve(roles, by); setApproval({ ...a, snapshot }); setDesign((d) => ({ ...d, role_set_hash: a.roles_hash, arms: { ...d.arms, roles: roles.map((r) => r.name) } })); setErr('') } catch (e) { setErr(String(e).replace(/^Error: /, '')) } }} />}
-          {step === 2 && <Step3 demo={demo} design={design} setDesign={setDesign} roles={roles} approved={approved} apiKey={apiKey} setApiKey={setApiKey} expert={expert}
-            onStart={async () => { try { const r = await api.start({ ...design, project_id: demo.id, role_set_hash: approval?.roles_hash ?? '' }, apiKey); setRunId(r.run_config_id); setStatus(null); setResults(null); setStep(3); setErr('') } catch (e) { setErr(String(e).replace(/^Error: /, '')) } }} />}
+          {step === 2 && <Step3 demo={demo} design={design} setDesign={setDesign} roles={roles} approved={approved} apiKey={apiKey} setApiKey={setApiKey} workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} expert={expert}
+            onStart={async () => { try { const r = await api.start({ ...design, project_id: demo.id, role_set_hash: approval?.roles_hash ?? '' }, apiKey, workspaceId); setRunId(r.run_config_id); setStatus(null); setResults(null); setStep(3); setErr('') } catch (e) { setErr(String(e).replace(/^Error: /, '')) } }} />}
           {step === 3 && <Step4 runId={runId} status={status} setStatus={setStatus} onDone={async (id) => { setResults(await api.results(id)) }} goResults={() => setStep(4)} />}
           {step === 4 && <Step5 results={results} demo={results?.project ?? demo} expert={expert} />}
         </>}
@@ -131,7 +132,7 @@ function Step2({ roles, setRoles, approval, approved, onApprove }: { roles: Role
   </section>)
 }
 
-function Step3({ demo, design, setDesign, roles, approved, apiKey, setApiKey, onStart, expert }: { demo: Demo; design: RunReq; setDesign: (d: RunReq) => void; roles: Role[]; approved: boolean; apiKey: string; setApiKey: (k: string) => void; onStart: () => void; expert: boolean }) {
+function Step3({ demo, design, setDesign, roles, approved, apiKey, setApiKey, workspaceId, setWorkspaceId, onStart, expert }: { workspaceId: string; setWorkspaceId: (v: string) => void; demo: Demo; design: RunReq; setDesign: (d: RunReq) => void; roles: Role[]; approved: boolean; apiKey: string; setApiKey: (k: string) => void; onStart: () => void; expert: boolean }) {
   const [preview, setPreview] = useState<{ prompt: string; sent_to_provider: string; template_version: string } | null>(null)
   const [pv, setPv] = useState('__generic__')
   const [est, setEst] = useState<Awaited<ReturnType<typeof api.estimate>> | null>(null)
@@ -155,6 +156,7 @@ function Step3({ demo, design, setDesign, roles, approved, apiKey, setApiKey, on
       <label>Temperature (blank = provider default)<input type="number" step="0.1" value={design.temperature ?? ''} onChange={(e) => up({ temperature: e.target.value === '' ? null : +e.target.value })} /></label>
       <label>Range tolerance (fraction of observed range)<input type="number" step="0.05" min={0} value={design.tolerance} onChange={(e) => up({ tolerance: +e.target.value })} /></label></div>
       {anthropic && <label>API key (kept in this tab's memory only; sent per request)<input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>}
+      {anthropic && <label>Workspace ID (only if the provider says your key is not scoped to a workspace)<input autoComplete="off" value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="wrkspc_…" /></label>}
       <div className="row"><label>Price in ($/M tokens)<input type="number" value={design.price_in ?? ''} onChange={(e) => up({ price_in: e.target.value === '' ? null : +e.target.value })} /></label>
         <label>Price out ($/M tokens)<input type="number" value={design.price_out ?? ''} onChange={(e) => up({ price_out: e.target.value === '' ? null : +e.target.value })} /></label>
         <label>Spend cap ($, needs prices)<input type="number" value={design.spend_cap ?? ''} onChange={(e) => up({ spend_cap: e.target.value === '' ? null : +e.target.value })} /></label></div></div>
@@ -186,6 +188,7 @@ function Step4({ runId, status, setStatus, onDone, goResults }: { runId: number 
       <div className="actions" style={{ justifyContent: 'flex-start' }}>
         {status.state === 'running' && <button className="secondary" onClick={() => api.cancel(runId)}>Cancel</button>}
         {status.state !== 'running' && <button onClick={goResults}>View results</button>}</div>
+      {status.provider_errors && status.provider_errors.length > 0 && <div role="alert" className="card"><p className="warn"><b>The model provider returned an error.</b> These runs are recorded as provider errors, not as invalid answers.</p>{status.provider_errors.map((e) => <pre key={e}>{e}</pre>)}</div>}
       <h3>Validation report (live)</h3>
       <table><thead><tr><th>Source</th><th>Runs</th><th>Statuses</th><th><Tip k="invalid">Invalid</Tip> rate</th><th>1st-attempt fail</th><th>Reasons</th></tr></thead><tbody>
         {Object.entries(status.report).map(([arm, r]) => <tr key={arm}><td>{sourceLabel(arm)}</td><td>{r.n_runs}</td><td>{Object.entries(r.status_counts).map(([k, v]) => `${k}: ${v}`).join(', ')}</td>

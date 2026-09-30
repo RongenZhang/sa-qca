@@ -58,3 +58,17 @@ def test_rate_limit_and_provider_errors_mapped():
 
 def test_key_never_in_repr():
     assert "sk-secret" not in repr(AnthropicProvider("sk-secret", client=fake_client()))
+
+
+def test_workspace_id_is_sent_as_header_only_when_given(monkeypatch):
+    seen = {}
+
+    def fake_ctor(**kw):
+        seen.update(kw)
+        return object()
+
+    monkeypatch.setattr(anthropic, "Anthropic", fake_ctor)
+    AnthropicProvider("k", workspace_id="wrkspc_123")
+    assert seen["default_headers"] == {"anthropic-workspace-id": "wrkspc_123"}
+    AnthropicProvider("k")
+    assert seen["default_headers"] is None

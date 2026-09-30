@@ -177,9 +177,10 @@ def estimate(body: RunIn) -> dict[str, Any]:
 
 
 @app.post("/api/runs")
-def create_run(body: RunIn, x_provider_key: str | None = Header(default=None)) -> dict[str, Any]:
+def create_run(body: RunIn, x_provider_key: str | None = Header(default=None),
+               x_provider_workspace: str | None = Header(default=None)) -> dict[str, Any]:
     try:
-        return {"run_config_id": service.start_run(body.model_dump(), x_provider_key)}
+        return {"run_config_id": service.start_run(body.model_dump(), x_provider_key, x_provider_workspace)}
     except PermissionError as e:
         raise HTTPException(403, str(e)) from e
     except ValueError as e:
