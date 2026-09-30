@@ -137,3 +137,91 @@ def generate_mechanical_configs(
         else:
             configs.append(MechanicalConfig(f"frequency_{d:+d}", f"frequency cutoff {d:+d}", None, "cutoff below 1", {"kind": "frequency", "shift": d}))
     return configs
+
+
+@dataclass(frozen=True)
+class SkaaningParams:
+    """Skaaning (2011) style: each condition gets a lower / original / higher anchor set (all three
+    anchors moved together by a fixed raw offset), crossed factorially across conditions. The outcome is
+    not perturbed by default. Frequency cutoff raised, consistency moved up and down. `shift_fraction`
+    is a share of the observed range (Skaaning used hand-picked raw offsets, roughly 5-15% of range)."""
+
+    shift_fraction: float = 0.05
+    perturb_outcome: bool = False
+    consistency_shifts: tuple[float, ...] = (-0.1, 0.1)
+    frequency_shifts: tuple[int, ...] = (1,)
+    max_conditions: int = 6  # 3**k - 1 analyses; refuse silently-huge grids
+
+
+def generate_skaaning_configs(
+    data: dict[str, list[float]],
+    reference: dict[str, dict[str, float]],
+    directions: dict[str, str],
+    outcome: str,
+    ref_cutoffs: dict[str, Any],
+    params: SkaaningParams = SkaaningParams(),
+) -> list[MechanicalConfig]:
+    import itertools
+
+    names = [n for n in reference if n != outcome]
+    if len(names) > params.max_conditions:
+        raise ValueError(f"{len(names)} conditions gives 3**{len(names)} - 1 configurations; raise max_conditions")
+    span = {n: max(data[n]) - min(data[n]) for n in [*names, outcome]}
+
+    def moved(n: str, level: int) -> dict[str, float]:
+        off = level * params.shift_fraction * span[n]
+        return {k: reference[n][k] + off for k in ANCHOR_KEYS}
+
+    def cutoffs(**over: Any) -> dict[str, Any]:
+        tt = {
+            "consistency_threshold": ref_cutoffs["consistency_threshold"],
+            "frequency_threshold": ref_cutoffs["frequency_threshold"],
+            "pri_threshold": ref_cutoffs.get("pri_threshold"),
+            "consistency_rationale": "mechanical: reference cutoff",
+            "frequency_rationale": "mechanical: reference cutoff",
+            "pri_rationale": "mechanical: reference cutoff" if ref_cutoffs.get("pri_threshold") is not None else None,
+        }
+        tt.update(over)
+        return tt
+
+    def decision(anchor_map: dict[str, dict[str, float]], tt: dict[str, Any], note: str) -> dict[str, Any]:
+        def block(n: str) -> dict[str, Any]:
+            return {"anchors": anchor_map[n], "rationale": {k: f"mechanical: {note}" for k in ANCHOR_KEYS}}
+
+        return {"conditions": {n: block(n) for n in names}, "outcome": block(outcome), "truth_table": cutoffs_(tt)}
+
+    def cutoffs_(tt: dict[str, Any]) -> dict[str, Any]:
+        return tt
+
+    out_levels = (-1, 0, 1) if params.perturb_outcome else (0,)
+    configs: list[MechanicalConfig] = []
+    for combo in itertools.product((-1, 0, 1), repeat=len(names)):
+        for ol in out_levels:
+            if all(c == 0 for c in combo) and ol == 0:
+                continue
+            amap = {n: moved(n, lv) for n, lv in zip(names, combo, strict=True)}
+            amap[outcome] = moved(outcome, ol)
+            label = ",".join(f"{n}{lv:+d}" for n, lv in zip(names, combo, strict=True)) + (f",{outcome}{ol:+d}" if params.perturb_outcome else "")
+            bad = [n for n, a in amap.items() if not _ordered(a, directions[n])]
+            cid = f"skaaning_{label}"
+            pert = {"kind": "skaaning_factorial", "levels": dict(zip(names, combo, strict=True)), "outcome_level": ol}
+            if bad:
+                configs.append(MechanicalConfig(cid, label, None, f"ordering broken for: {', '.join(bad)}", pert))
+            else:
+                configs.append(MechanicalConfig(cid, label, decision(amap, cutoffs(), label), None, pert))
+    ref_map = {n: dict(reference[n]) for n in [*names, outcome]}
+    for d in params.consistency_shifts:
+        v = round(ref_cutoffs["consistency_threshold"] + d, 10)
+        pert = {"kind": "consistency", "shift": d}
+        if 0.0 <= v <= 1.0:
+            configs.append(MechanicalConfig(f"consistency_{d:+g}", f"consistency {d:+g}", decision(ref_map, cutoffs(consistency_threshold=v), f"consistency {d:+g}"), None, pert))
+        else:
+            configs.append(MechanicalConfig(f"consistency_{d:+g}", f"consistency {d:+g}", None, "cutoff outside [0, 1]", pert))
+    for d in params.frequency_shifts:
+        v = ref_cutoffs["frequency_threshold"] + d
+        pert = {"kind": "frequency", "shift": d}
+        if v >= 1:
+            configs.append(MechanicalConfig(f"frequency_{d:+d}", f"frequency {d:+d}", decision(ref_map, cutoffs(frequency_threshold=v), f"frequency {d:+d}"), None, pert))
+        else:
+            configs.append(MechanicalConfig(f"frequency_{d:+d}", f"frequency {d:+d}", None, "cutoff below 1", pert))
+    return configs

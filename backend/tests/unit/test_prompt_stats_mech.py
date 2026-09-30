@@ -95,3 +95,18 @@ def test_mechanical_ordering_breaks_are_skipped_not_repaired():
                                                         consistency_shifts=(), frequency_shifts=()))
     bad = next(c for c in cfgs if c.id == "crossover_one_X_+10")
     assert bad.decision is None and "ordering" in bad.skipped_reason
+
+
+def test_skaaning_factorial_size_and_outcome_untouched():
+    from app.domain.mechanical import generate_skaaning_configs
+
+    data = {"X": [float(i) for i in range(1, 101)], "Z": [float(i) for i in range(1, 101)], "Y": [float(i) for i in range(1, 101)]}
+    ref = {"X": REF["X"], "Z": REF["X"], "Y": REF["Y"]}
+    cfgs = generate_skaaning_configs(data, ref, {"X": "positive", "Z": "positive", "Y": "positive"}, "Y", TT)
+    fact = [c for c in cfgs if c.perturbation["kind"] == "skaaning_factorial"]
+    assert len(fact) == 3**2 - 1
+    assert all(c.decision["outcome"]["anchors"] == ref["Y"] for c in fact)
+    hi = next(c for c in fact if c.perturbation["levels"] == {"X": 1, "Z": 0})
+    assert hi.decision["conditions"]["X"]["anchors"]["crossover"] == 50 + 0.05 * 99
+    assert hi.decision["conditions"]["Z"]["anchors"] == ref["Z"]
+    assert {c.id for c in cfgs if c.perturbation["kind"] != "skaaning_factorial"} == {"consistency_-0.1", "consistency_+0.1", "frequency_+1"}
