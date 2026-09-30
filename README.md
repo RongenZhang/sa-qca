@@ -1,52 +1,64 @@
 # Stakeholder Anchors (SA-QCA)
 
-Stakeholder-based calibration sensitivity analysis for fuzzy-set QCA.
+Stakeholder-based calibration sensitivity analysis for fuzzy-set Qualitative Comparative Analysis (fsQCA).
 
-> **Status:** a candidate protocol for discussion, not a finished standard. Under development (phase 5 of 6).
+> **Status: a candidate protocol for discussion, not a finished standard.** The software is research code under active development. Please read [Limitations](#limitations) before relying on it.
 
-## Design rules
-- Agents (or the mechanical generator, or the analyst) supply anchors and truth-table cutoffs. Nothing else is discretionary.
-- The R core is pure: identical inputs give byte-identical solutions (tested).
-- Values are never clamped, trimmed, rounded or repaired before R.
+## What it does
 
-## Phase 1 contents
-- `rservice/`: R pipeline (calibrate, truth table, necessity, complex/parsimonious/intermediate minimization) and Plumber API.
-- `demo/`: synthetic demo dataset and project spec.
-- `backend/`: FastAPI skeleton with pass-through to R.
+In fsQCA the analyst sets the calibration anchors, and results can depend on those choices. Usual robustness checks nudge the analyst's own numbers. SA-QCA asks a different question: across the range of calibration decisions based on stakeholders' different interpretations of conditions and outcomes, which findings survive?
 
-## Run the R tests
+1. You describe the phenomenon and define each condition and the outcome, then approve a set of stakeholder roles drawn from your own cases.
+2. Each role (and a role-free "generic" LLM calibration) proposes anchors and truth-table cutoffs, with a written rationale.
+3. The same QCA (R) code analyses every proposal, so judgment and calculation stay separate.
+4. Structurally invalid answers are rejected, never repaired, and the invalid rate is reported as a finding.
+5. You compare solutions across roles, the generic calibration, a mechanical perturbation of your own anchors (Skaaning-style), and your original solution.
+
+Design rules: only an agent, the mechanical generator or the analyst ever supplies anchors; model output is never edited before R; the R core is pure (identical inputs give identical solutions, tested); nothing runs before roles are approved; every number in the UI traces to a stored run.
+
+## Quickstart (no API key needed)
+
+Requirements: R 4.5+ with the packages `QCA`, `SetMethods`, `jsonlite`, `plumber`, `testthat`; Python 3.11+; Node 22+.
+
 ```bash
-cd rservice && Rscript tests/testthat.R
-```
-Requires R ≥ 4.5 with `QCA`, `SetMethods`, `plumber`, `jsonlite`, `testthat`.
+# terminal 1: backend
+cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/uvicorn app.main:app --port 8001
 
-## Phase 2: agent engine (backend)
-Validator, prompt renderer, mechanical generator, provider abstraction (Anthropic + mock), runner with retry/invalid handling, cost cap, storage models, validation report. See `docs/protocol-to-code.md`.
-```bash
-cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/bin/pytest
+# terminal 2: frontend
+cd frontend && npm install && npm run dev      # open http://localhost:5173
 ```
 
-## Phase 3: wizard UI (demo project, no API key needed)
-```bash
-cd backend && .venv/bin/uvicorn app.main:app --port 8001      # needs Rscript with QCA installed
-cd frontend && npm install && npm run dev                    # http://localhost:5173
-```
-The five-step wizard (data, roles with approval, run design with exact-prompt preview and cost/call estimate, live run, results) runs against a scripted demo provider. Choose "Anthropic" in step 3 and enter a key to use a real model; the key stays in browser memory and is sent per request only.
+Start with the bundled **demo project** (synthetic data). In step 3 choose "Scripted test responses": a stand-in that needs no key and is **not** LLM output. To use a real model, choose Anthropic and enter your key (and a workspace ID if your key is not scoped to one). The key stays in browser memory and is sent per request only.
 
 ## Your own data
-Step 1 > "Upload my own data": CSV (comma, semicolon or tab) or Excel (first sheet), up to 10 MB. Pick the outcome and conditions, give each a construct definition and measurement instrument, declare its direction, and optionally enter your original anchors, cutoffs and directional expectations (needed for the mechanical source and the comparison with your published solution). Variable names must start with a letter and use letters, digits and underscores (a QCA requirement); rename columns in your file if needed. Rows with missing values are dropped only if you tick the listwise-deletion box, and the count is recorded. The uploaded file stays in the local database; models receive only definitions and summary statistics.
 
-"Scripted test responses" in step 3 works on any project and needs no key, but it is a stand-in, not LLM output.
+Step 1 › "Upload my own data": CSV (comma, semicolon or tab) or Excel (first sheet), up to 10 MB. Choose the outcome and conditions; give each a construct definition and measurement instrument; declare its direction; optionally enter your original anchors, cutoffs and directional expectations (needed for the mechanical source and the comparison with your published solution). Variable names must start with a letter and use letters, digits and underscores. Rows with missing values are dropped only if you tick the listwise-deletion box. The file stays in the local database; models receive only definitions and summary statistics, never rows.
 
-## Exports and verification (phase 5)
-On the results screen: **Download replication bundle (ZIP)**, **Open report (HTML)** (print to PDF from the browser) and **Verify bundle**.
+## Exports and verification
 
-The bundle holds the analysis data, project definitions, approved roles, every rendered prompt, every raw model response, the decisions handed to R, the R code, recorded results, environment versions and a SHA-256 manifest; it never contains API keys. To re-run the QCA computation with no LLM calls:
-```bash
-unzip sa-qca-run2-replication.zip -d bundle && cd bundle && Rscript replication/replicate.R
-```
-or check the manifest first and then replicate:
+The results screen offers a **replication bundle** (ZIP: analysis data, project definitions, approved roles, every rendered prompt, every raw model response, the decisions handed to R, the R code, recorded results, environment versions and a SHA-256 manifest; never API keys), an **HTML report** with a draft AI-use statement filled from the run's actual models and parameters (print to PDF from the browser), and **Verify bundle**, which re-runs the QCA computation with no LLM calls and checks every stored result is reproduced exactly:
+
 ```bash
 cd backend && .venv/bin/python -m app.exports.verify path/to/sa-qca-run2-replication.zip
 ```
-Exit status 0 means every stored QCA result was reproduced exactly. Model answers themselves are not regenerated; the stored raw responses are the record. The report includes a draft AI-use statement filled from the run's actual models, parameters and retry policy (for scripted test runs it carries a warning not to use it).
+
+The QCA computation is reproduced exactly. Model answers are not regenerated: the stored raw responses are the record.
+
+## Limitations
+
+- The Anthropic adapter is covered by mocked tests and has had only a first real-API attempt; expect rough edges. OpenAI and OpenAI-compatible providers are not implemented yet.
+- "Suggest roles" returns scripted examples, not LLM suggestions.
+- The mechanical source follows Skaaning (2011) as read from the paper (lower/original/higher anchor sets crossed across conditions, outcome unchanged, frequency and consistency cutoffs varied); the offset size is this tool's choice, and the grid grows as 3^k with k conditions.
+- Only the `default_v1` prompt template is available; there is no template editor yet.
+- A `docker-compose.yml` exists but has never been run. The app has no authentication and is meant to run locally for one researcher; do not expose it to the internet.
+- PDF export is via the browser's print dialog. Accessibility has had only basic attention (keyboard use, a colour-blind-safe palette).
+- Similarity scores compare solution terms; see [docs/similarity-metrics.md](docs/similarity-metrics.md) for definitions and caveats.
+
+## Documentation
+
+[docs/protocol-to-code.md](docs/protocol-to-code.md) maps each protocol step to the code; [docs/similarity-metrics.md](docs/similarity-metrics.md) documents the metrics.
+
+## Citing
+
+See [CITATION.cff](CITATION.cff); the paper reference will be completed on publication. Released under the MIT License.
