@@ -12,6 +12,6 @@ Run rules (`app/engine/runner.py`): one validation retry with errors appended; s
 
 Statuses: `valid`, `invalid` (agent failed validation twice; counted in the invalid rate), `valid_no_solution`, `r_error`, `provider_error` (not counted as invalid), `pending`.
 
-Mechanical arm: `generate_skaaning_configs` follows Skaaning (2011) as read from the paper (full factorial of lower/original/higher anchor sets per condition, all three anchors moved together, outcome not perturbed, frequency 1->2, consistency +/-0.10). Its offset size (`shift_fraction`, default 5% of observed range) is our choice; Skaaning hand-picked raw offsets. `generate_mechanical_configs` (percentile shifts) is kept as an alternative variant, not the default.
+Mechanical source: `generate_skaaning_configs` follows Skaaning (2011) as read from the paper (full factorial of lower/original/higher anchor sets per condition, all three anchors moved together, outcome not perturbed, frequency 1->2, consistency +/-0.10). Its offset size (`shift_fraction`, default 5% of observed range) is our choice; Skaaning hand-picked raw offsets. `generate_mechanical_configs` (percentile shifts) is kept as an alternative variant, not the default.
 
 Provisional choices: cost estimates use an empty price table unless the user supplies one; validation tolerance is a fraction of the observed range.

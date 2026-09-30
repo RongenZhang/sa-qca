@@ -1,10 +1,13 @@
 import { useRef, type ReactNode } from 'react'
+import { sourceLabel } from './labels'
 
 export function toCsv(rows: Record<string, unknown>[]): string {
   if (!rows.length) return ''
   const cols = Object.keys(rows[0])
   const esc = (v: unknown) => { const t = v === null || v === undefined ? '' : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t }
-  return [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n')
+  // CSV uses the UI vocabulary: the stored `arm` id is exported as a labelled `source`
+  const val = (r: Record<string, unknown>, c: string) => (c === 'arm' ? sourceLabel(String(r[c])) : r[c])
+  return [cols.map((c) => (c === 'arm' ? 'source' : c)).join(','), ...rows.map((r) => cols.map((c) => esc(val(r, c))).join(','))].join('\n')
 }
 function download(name: string, blob: Blob) { const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000) }
 const slug = (t: string) => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')

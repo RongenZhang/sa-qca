@@ -1,4 +1,5 @@
 import type { Stats } from './api'
+import { sourceLabel } from './labels'
 
 // Okabe-Ito colour-blind-safe palette. Explicit hex values so exported SVG/PNG render standalone.
 export const PALETTE = ['#0072B2', '#E69F00', '#009E73', '#CC79A7', '#56B4E9', '#D55E00', '#F0E442']
@@ -7,12 +8,12 @@ export const armColors = (arms: string[]) => { let i = 0; const m: Record<string
 const INK = '#1d2329', SOFT = '#d9dde1'
 const Bg = ({ w, h }: { w: number; h: number }) => <rect width={w} height={h} fill="#ffffff" rx={6} />
 const q = (v: number[], p: number) => { const s = [...v].sort((a, b) => a - b), h = (s.length - 1) * p, lo = Math.floor(h), hi = Math.ceil(h); return s[lo] + (h - lo) * (s[hi] - s[lo]) }
-const short = (a: string) => (a.length > 16 ? a.replace(/^role:/, '').slice(0, 15) + '…' : a.replace(/^role:/, ''))
+const short = (a: string) => { const l = a.startsWith('role:') ? a.slice(5) : sourceLabel(a); return l.length > 16 ? l.slice(0, 15) + '…' : l }
 
 export function SimilarityBox({ data, arms, colors, distinct }: { data: { arm: string; score: number; run_id: number }[]; arms: string[]; colors: Record<string, string>; distinct: Record<string, number> }) {
   const W = 640, H = 340, L = 44, T = 16, B = 70, cw = (W - L - 12) / Math.max(arms.length, 1), y = (v: number) => T + (1 - v) * (H - T - B)
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Box plot of similarity to the analyst's solution by arm, with every run as a point" fontFamily="system-ui,sans-serif" fontSize={11}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Box plot of similarity to the analyst's solution by anchor source, with every run as a point" fontFamily="system-ui,sans-serif" fontSize={11}>
       <Bg w={W} h={H} />
       {[0, 0.25, 0.5, 0.75, 1].map((t) => <g key={t}><line x1={L} x2={W - 8} y1={y(t)} y2={y(t)} stroke={SOFT} /><text x={L - 6} y={y(t) + 4} textAnchor="end" fill={INK}>{t}</text></g>)}
       {arms.map((a, i) => {
@@ -33,7 +34,7 @@ export function SimilarityBox({ data, arms, colors, distinct }: { data: { arm: s
 export function RobustnessHeat({ rows, arms }: { rows: { path: string; share_by_arm: Record<string, number | null> }[]; arms: string[] }) {
   const cw = 92, rh = 30, L = 170, T = 60, W = L + cw * arms.length + 10, H = T + rh * rows.length + 10
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Share of valid runs in which each of the analyst's solution paths survives, by arm" fontFamily="system-ui,sans-serif" fontSize={11}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Share of valid runs in which each of the analyst's solution paths survives, by anchor source" fontFamily="system-ui,sans-serif" fontSize={11}>
       <Bg w={W} h={H} />
       {arms.map((a, i) => <text key={a} x={L + cw * (i + 0.5)} y={T - 10} textAnchor="middle" fill={INK}>{short(a)}</text>)}
       {rows.map((r, k) => <g key={r.path}><text x={L - 8} y={T + rh * k + rh / 2 + 4} textAnchor="end" fill={INK}>{r.path}</text>
@@ -46,7 +47,7 @@ export function AnchorStrip({ variable, stats, reference, rows, arms, colors }: 
   const W = 640, L = 130, H0 = 78, rh = 22, all = ['reference', ...arms], H = H0 + rh * all.length + 22, span = stats.max - stats.min || 1
   const x = (v: number) => L + ((v - stats.min) / span) * (W - L - 12), max = Math.max(...stats.histogram.map((b) => b.count), 1)
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Anchors proposed for ${variable} by arm, over the observed distribution`} fontFamily="system-ui,sans-serif" fontSize={11}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Anchors proposed for ${variable} by anchor source, over the observed distribution`} fontFamily="system-ui,sans-serif" fontSize={11}>
       <Bg w={W} h={H} />
       {stats.histogram.map((b, i) => <rect key={i} x={x(b.lower) + 1} y={H0 - (b.count / max) * (H0 - 12)} width={Math.max(1, x(b.upper) - x(b.lower) - 2)} height={(b.count / max) * (H0 - 26)} fill="#d9dde1" />)}
       {all.map((a, k) => {

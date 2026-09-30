@@ -12,4 +12,4 @@ When a solution has several models (M1, M2, ...), the dashboard lets you choose:
 
 Conventions: two empty solutions score 1.0 (both find nothing); one empty scores 0.0. Runs with `invalid` status have no solution and are excluded from similarity and from the robustness denominators. Adding a metric: register a function `(a, b) -> float in [0, 1]` in `backend/app/domain/similarity.py::METRICS`.
 
-Path robustness: for each path (term) in the analyst's reference solution, the share of a arm's *valid* runs whose solution contains it. Across-role label: `all roles`, `some roles`, `one role only`, or `no role`, computed over role arms with at least one valid run.
+Path robustness: for each path (term) in the analyst's reference solution, the share of a source's *valid* runs whose solution contains it. Across-role label: `all roles`, `some roles`, `one role only`, or `no role`, computed over stakeholder sources with at least one valid run.
