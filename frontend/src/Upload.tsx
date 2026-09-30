@@ -1,0 +1,77 @@
+import { useState } from 'react'
+import { api, type ConfigureBody, type Demo, type UploadInfo } from './api'
+
+type Col = { use: boolean; role: 'condition' | 'outcome'; direction: 'positive' | 'negative'; units: string; def: string; inst: string; dirExp: string; fn: string; cr: string; fm: string }
+const blank = (): Col => ({ use: false, role: 'condition', direction: 'positive', units: '', def: '', inst: '', dirExp: '', fn: '', cr: '', fm: '' })
+const num = (s: string) => (s.trim() === '' ? null : Number(s))
+
+export function Upload({ onReady }: { onReady: (p: Demo) => void }) {
+  const [info, setInfo] = useState<UploadInfo | null>(null)
+  const [cols, setCols] = useState<Record<string, Col>>({})
+  const [name, setName] = useState('')
+  const [desc, setDesc] = useState('')
+  const [drop, setDrop] = useState(false)
+  const [cons, setCons] = useState('')
+  const [freq, setFreq] = useState('')
+  const [pri, setPri] = useState('')
+  const [err, setErr] = useState('')
+  const [busy, setBusy] = useState(false)
+  const set = (n: string, p: Partial<Col>) => setCols((c) => ({ ...c, [n]: { ...c[n], ...p } }))
+
+  const pick = async (f: File | undefined) => {
+    if (!f) return
+    setErr(''); setBusy(true)
+    try { const u = await api.upload(f); setInfo(u); setName(f.name.replace(/\.[^.]+$/, '')); setCols(Object.fromEntries(u.columns.map((c) => [c.name, blank()]))) } catch (e) { setErr(String(e).replace(/^Error: /, '')); setInfo(null) }
+    setBusy(false)
+  }
+  const used = info ? info.columns.filter((c) => cols[c.name]?.use) : []
+  const missing = used.reduce((a, c) => a + c.n_missing, 0)
+  const save = async () => {
+    if (!info) return
+    setErr(''); setBusy(true)
+    const body: ConfigureBody = {
+      name, case_description: desc, drop_missing: drop,
+      reference_cutoffs: cons || freq ? { consistency_threshold: num(cons), frequency_threshold: num(freq), pri_threshold: num(pri) } : null,
+      variables: used.map((c) => { const v = cols[c.name]; const a = { full_non_membership: num(v.fn), crossover: num(v.cr), full_membership: num(v.fm) }
+        return { name: c.name, role: v.role, direction: v.direction, construct_definition: v.def, instrument: v.inst, units: v.units, dir_exp: v.role === 'condition' && v.dirExp !== '' ? Number(v.dirExp) : null, anchors: v.fn || v.cr || v.fm ? a : null } }),
+    }
+    try { onReady(await api.configure(info.project_id, body)) } catch (e) { setErr(String(e).replace(/^Error: /, '')) }
+    setBusy(false)
+  }
+  return (
+    <div className="card">
+      <h3>Upload your data</h3>
+      <p className="muted">CSV (comma, semicolon or tab) or Excel (first sheet), up to 10 MB. The file stays on this machine. Only definitions and summary statistics of the variables you choose are ever sent to a model.</p>
+      <label>Data file<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" onChange={(e) => pick(e.target.files?.[0])} /></label>
+      {err && <p role="alert" className="warn">{err}</p>}
+      {info && <>
+        <p><b>{info.filename}</b> · {info.n_rows} rows · {info.columns.length} columns</p>
+        <div style={{ overflowX: 'auto' }}><table><thead><tr>{info.preview.header.map((h) => <th key={h}>{h}</th>)}</tr></thead><tbody>
+          {info.preview.rows.map((r, i) => <tr key={i}>{r.map((c, k) => <td key={k}>{c ?? <span className="muted">(missing)</span>}</td>)}</tr>)}</tbody></table></div>
+        <div className="row"><label>Project name<input value={name} onChange={(e) => setName(e.target.value)} /></label></div>
+        <label>Case and construct description (paste from your article; optional but recommended)<textarea rows={4} value={desc} onChange={(e) => setDesc(e.target.value)} /></label>
+        <h3 style={{ marginTop: 14 }}>Choose the outcome and conditions</h3>
+        <p className="muted">Columns such as case names or IDs are simply left unticked. Give each chosen variable its construct definition and measurement instrument: without them an agent only sees numbers and tends to return a percentile rule. Original anchors and cutoffs are optional, but the mechanical source and the comparison with your published solution need them.</p>
+        {info.columns.map((c) => { const v = cols[c.name]; if (!v) return null
+          return (<div className="card" key={c.name}>
+            <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}><input type="checkbox" disabled={!c.numeric} checked={v.use} onChange={(e) => set(c.name, { use: e.target.checked })} /> <b>{c.name}</b>
+              {!c.numeric && <span className="muted">not numeric, cannot be used</span>}{c.n_missing > 0 && <span className="warn">{c.n_missing} missing</span>}</label>
+            {v.use && <>
+              <div className="row"><label>Role<select value={v.role} onChange={(e) => set(c.name, { role: e.target.value as Col['role'] })}><option value="condition">Condition</option><option value="outcome">Outcome</option></select></label>
+                <label>Direction<select value={v.direction} onChange={(e) => set(c.name, { direction: e.target.value as Col['direction'] })}><option value="positive">Positive (higher raw value = more membership)</option><option value="negative">Negative (higher raw value = less membership)</option></select></label>
+                <label>Units<input value={v.units} onChange={(e) => set(c.name, { units: e.target.value })} /></label>
+                {v.role === 'condition' && <label>Directional expectation<select value={v.dirExp} onChange={(e) => set(c.name, { dirExp: e.target.value })}><option value="">none</option><option value="1">presence contributes</option><option value="0">absence contributes</option></select></label>}</div>
+              <label>Construct definition<textarea rows={2} value={v.def} onChange={(e) => set(c.name, { def: e.target.value })} /></label>
+              <label>Measurement instrument (item wording, scale, scale anchors)<textarea rows={2} value={v.inst} onChange={(e) => set(c.name, { inst: e.target.value })} /></label>
+              <div className="row"><label>Original full non-membership<input inputMode="decimal" value={v.fn} onChange={(e) => set(c.name, { fn: e.target.value })} /></label>
+                <label>Original crossover<input inputMode="decimal" value={v.cr} onChange={(e) => set(c.name, { cr: e.target.value })} /></label>
+                <label>Original full membership<input inputMode="decimal" value={v.fm} onChange={(e) => set(c.name, { fm: e.target.value })} /></label></div></>}
+          </div>) })}
+        <div className="card"><h3>Your original truth-table cutoffs (optional)</h3><div className="row">
+          <label>Consistency (0–1)<input inputMode="decimal" value={cons} onChange={(e) => setCons(e.target.value)} /></label>
+          <label>Frequency (cases, ≥ 1)<input inputMode="numeric" value={freq} onChange={(e) => setFreq(e.target.value)} /></label>
+          <label>PRI (optional)<input inputMode="decimal" value={pri} onChange={(e) => setPri(e.target.value)} /></label></div></div>
+        {missing > 0 && <label><input type="checkbox" checked={drop} onChange={(e) => setDrop(e.target.checked)} /> Drop rows with missing values in the chosen columns (listwise deletion; QCA needs complete data). The number dropped is recorded.</label>}
+        <div className="actions"><span /><button disabled={busy || used.length < 3} onClick={save}>Save project</button></div></>}
+    </div>)
+}

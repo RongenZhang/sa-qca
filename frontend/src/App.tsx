@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type Demo, type Results, type Role, type RunReq, type Status } from './api'
 import { Dashboard } from './Dashboard'
 import { Hist } from './Hist'
+import { Upload } from './Upload'
 import { sourceLabel } from './labels'
 
 const STEPS = ['1 Data & variables', '2 Stakeholder roles', '3 Run design', '4 Run', '5 Results']
@@ -25,20 +26,25 @@ export default function App() {
   const [expert, setExpert] = useState(false)
   const [roles, setRoles] = usePersisted<Role[]>('roles', [])
   const [approval, setApproval] = usePersisted<{ roles_hash: string; approved_by: string; approved_at: string; snapshot: string } | null>('approval', null)
-  const [design, setDesign] = usePersisted<RunReq>('design', { role_set_hash: '', arms: { roles: [], generic: true, mechanical: true }, reps: 3, provider: 'demo-mock', model: 'demo-mock-1', temperature: null, tolerance: 0, spend_cap: null, price_in: null, price_out: null })
+  const [design, setDesign] = usePersisted<RunReq>('design', { project_id: 'demo', role_set_hash: '', arms: { roles: [], generic: true, mechanical: true }, reps: 3, provider: 'demo-mock', model: 'demo-mock-1', temperature: null, tolerance: 0, spend_cap: null, price_in: null, price_out: null })
   const [apiKey, setApiKey] = useState('') // memory only; never persisted
   const [runId, setRunId] = usePersisted<number | null>('runId', null)
   const [status, setStatus] = useState<Status | null>(null)
   const [results, setResults] = useState<Results | null>(null)
 
-  useEffect(() => { api.demo().then(setDemo).catch((e) => setErr(String(e))) }, [])
+  const [projectId, setProjectId] = usePersisted('projectId', 'demo')
+  useEffect(() => { api.project(projectId).then(setDemo).catch((e) => { setErr(String(e).replace(/^Error: /, '')); if (projectId !== 'demo') setProjectId('demo') }) }, [projectId, setProjectId])
+  const switchProject = (p: Demo) => {
+    setProjectId(p.id); setDemo(p); setRunId(null); setStatus(null); setResults(null); setErr('')
+    setDesign((d) => ({ ...d, project_id: p.id, arms: { ...d.arms, mechanical: p.has_reference && d.arms.mechanical } }))
+  }
   const snapshot = JSON.stringify(roles.map((r) => [r.name, r.description]))
   const approved = approval !== null && approval.snapshot === snapshot
   const done = [!!demo, approved, false, status?.state === 'completed', !!results]
 
   return (
     <>
-      <div className="banner" role="note">SA-QCA is a <b>candidate protocol for discussion</b>, not a finished standard. Demo data are synthetic. {' '}
+      <div className="banner" role="note">SA-QCA is a <b>candidate protocol for discussion</b>, not a finished standard. {demo?.is_demo && 'The demo data are synthetic. '}
         <label style={{ display: 'inline' }}><input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} /> Expert view (raw JSON)</label></div>
       <main>
         <h1>Stakeholder Anchors (SA-QCA)</h1>
@@ -47,10 +53,10 @@ export default function App() {
         </ol></nav>
         {err && <p role="alert" className="warn">{err}</p>}
         {!demo ? <p>Loading…</p> : <>
-          {step === 0 && <Step1 demo={demo} expert={expert} />}
-          {step === 1 && <Step2 roles={roles} setRoles={setRoles} approval={approval} approved={approved} onApprove={async (by) => { try { const a = await api.approve(roles, by); setApproval({ ...a, snapshot }); setDesign((d) => ({ ...d, role_set_hash: a.roles_hash, arms: { ...d.arms, roles: roles.map((r) => r.name) } })); setErr('') } catch (e) { setErr(String(e)) } }} />}
-          {step === 2 && <Step3 design={design} setDesign={setDesign} roles={roles} approved={approved} apiKey={apiKey} setApiKey={setApiKey} expert={expert}
-            onStart={async () => { try { const r = await api.start({ ...design, role_set_hash: approval?.roles_hash ?? '' }, apiKey); setRunId(r.run_config_id); setStatus(null); setResults(null); setStep(3); setErr('') } catch (e) { setErr(String(e)) } }} />}
+          {step === 0 && <Step1 demo={demo} expert={expert} onProject={switchProject} />}
+          {step === 1 && <Step2 roles={roles} setRoles={setRoles} approval={approval} approved={approved} onApprove={async (by) => { try { const a = await api.approve(roles, by); setApproval({ ...a, snapshot }); setDesign((d) => ({ ...d, role_set_hash: a.roles_hash, arms: { ...d.arms, roles: roles.map((r) => r.name) } })); setErr('') } catch (e) { setErr(String(e).replace(/^Error: /, '')) } }} />}
+          {step === 2 && <Step3 demo={demo} design={design} setDesign={setDesign} roles={roles} approved={approved} apiKey={apiKey} setApiKey={setApiKey} expert={expert}
+            onStart={async () => { try { const r = await api.start({ ...design, project_id: demo.id, role_set_hash: approval?.roles_hash ?? '' }, apiKey); setRunId(r.run_config_id); setStatus(null); setResults(null); setStep(3); setErr('') } catch (e) { setErr(String(e).replace(/^Error: /, '')) } }} />}
           {step === 3 && <Step4 runId={runId} status={status} setStatus={setStatus} onDone={async (id) => { setResults(await api.results(id)) }} goResults={() => setStep(4)} />}
           {step === 4 && <Step5 results={results} demo={demo} expert={expert} />}
         </>}
@@ -59,10 +65,18 @@ export default function App() {
   )
 }
 
-function Step1({ demo, expert }: { demo: Demo; expert: boolean }) {
+function Step1({ demo, expert, onProject }: { demo: Demo; expert: boolean; onProject: (p: Demo) => void }) {
+  const [mode, setMode] = useState<'current' | 'upload'>('current')
   return (<section aria-labelledby="s1">
     <h2 id="s1">Step 1: Data and variables</h2>
-    <p>{demo.name} · {demo.n_cases} cases. <span className="muted">{demo.case_description}</span></p>
+    <div className="actions" style={{ justifyContent: 'flex-start' }}>
+      <button className={mode === 'current' ? '' : 'secondary'} onClick={() => setMode('current')}>Current project</button>
+      <button className={mode === 'upload' ? '' : 'secondary'} onClick={() => setMode('upload')}>Upload my own data</button>
+      {!demo.is_demo && <button className="secondary" onClick={async () => onProject(await api.project('demo'))}>Switch to the demo project</button>}
+    </div>
+    {mode === 'upload' ? <Upload onReady={(p) => { onProject(p); setMode('current') }} /> : <>
+    <p>{demo.name} · {demo.n_cases} cases{demo.n_dropped > 0 && ` (${demo.n_dropped} rows dropped for missing values)`}. <span className="muted">{demo.case_description}</span></p>
+    {!demo.has_reference && <p className="muted" role="note">No complete set of original anchors and cutoffs was given, so the mechanical source and the comparison with your published solution are unavailable for this project.</p>}
     <p className="muted">Data minimization: agents receive only the definitions, instruments and the summary statistics/histograms below. Raw rows are never sent.</p>
     {demo.warnings.length > 0 && <p role="alert" className="warn">Warning: {demo.warnings.join('; ')}. An agent given only statistics tends to return a percentile rule.</p>}
     {demo.variables.map((v) => (<div className="card" key={v.name}>
@@ -72,7 +86,7 @@ function Step1({ demo, expert }: { demo: Demo; expert: boolean }) {
         <p className="muted">Analyst's original <Tip k="anchors">anchors</Tip>: {Object.values(demo.reference[v.name] ?? {}).join(' / ')}</p></div>
         <Hist stats={v.stats} marks={Object.values(demo.reference[v.name] ?? {})} label={`Histogram of ${v.name} with the analyst's anchors marked`} /></div>
     </div>))}
-    {expert && <pre>{JSON.stringify(demo, null, 1)}</pre>}
+    {expert && <pre>{JSON.stringify(demo, null, 1)}</pre>}</>}
   </section>)
 }
 
@@ -106,7 +120,7 @@ function Step2({ roles, setRoles, approval, approved, onApprove }: { roles: Role
   </section>)
 }
 
-function Step3({ design, setDesign, roles, approved, apiKey, setApiKey, onStart, expert }: { design: RunReq; setDesign: (d: RunReq) => void; roles: Role[]; approved: boolean; apiKey: string; setApiKey: (k: string) => void; onStart: () => void; expert: boolean }) {
+function Step3({ demo, design, setDesign, roles, approved, apiKey, setApiKey, onStart, expert }: { demo: Demo; design: RunReq; setDesign: (d: RunReq) => void; roles: Role[]; approved: boolean; apiKey: string; setApiKey: (k: string) => void; onStart: () => void; expert: boolean }) {
   const [preview, setPreview] = useState<{ prompt: string; sent_to_provider: string; template_version: string } | null>(null)
   const [pv, setPv] = useState('__generic__')
   const [est, setEst] = useState<Awaited<ReturnType<typeof api.estimate>> | null>(null)
@@ -114,16 +128,16 @@ function Step3({ design, setDesign, roles, approved, apiKey, setApiKey, onStart,
   const up = (p: Partial<RunReq>) => { setDesign({ ...design, ...p }); setEst(null); setConfirm(false) }
   const anthropic = design.provider === 'anthropic'
   const canRun = confirm && est && (design.arms.roles.length === 0 || approved) && (!anthropic || apiKey) && (design.arms.roles.length + Number(design.arms.generic) + Number(design.arms.mechanical) > 0)
-  useEffect(() => { api.preview(pv === '__generic__' ? null : roles.find((r) => r.name === pv) ?? null).then(setPreview).catch(() => undefined) }, [pv, roles])
+  useEffect(() => { api.preview(pv === '__generic__' ? null : roles.find((r) => r.name === pv) ?? null, demo.id).then(setPreview).catch(() => undefined) }, [pv, roles, demo.id])
   return (<section aria-labelledby="s3">
     <h2 id="s3">Step 3: Run design</h2>
     {!approved && <p role="alert" className="warn">Approve stakeholder roles first (step 2) to include stakeholder sources.</p>}
     <div className="card"><h3>Anchor sources</h3>
       {roles.map((r) => <label key={r.name}><input type="checkbox" disabled={!approved} checked={design.arms.roles.includes(r.name)} onChange={(e) => up({ arms: { ...design.arms, roles: e.target.checked ? [...design.arms.roles, r.name] : design.arms.roles.filter((n) => n !== r.name) } })} /> Stakeholder: {r.name}</label>)}
       <label><input type="checkbox" checked={design.arms.generic} onChange={(e) => up({ arms: { ...design.arms, generic: e.target.checked } })} /> Generic (same prompt, no role)</label>
-      <label><input type="checkbox" checked={design.arms.mechanical} onChange={(e) => up({ arms: { ...design.arms, mechanical: e.target.checked } })} /> Mechanical (Skaaning-style perturbation of the analyst's anchors; no LLM)</label></div>
+      <label><input type="checkbox" disabled={!demo.has_reference} checked={design.arms.mechanical && demo.has_reference} onChange={(e) => up({ arms: { ...design.arms, mechanical: e.target.checked } })} /> Mechanical (Skaaning-style perturbation of the analyst's anchors; no LLM){!demo.has_reference && <span className="warn"> needs the analyst's original anchors and cutoffs (step 1)</span>}</label></div>
     <div className="card"><h3>Model and sampling</h3><div className="row">
-      <label>Provider<select value={design.provider} onChange={(e) => up({ provider: e.target.value, model: e.target.value === 'anthropic' ? 'claude-opus-5-5' : 'demo-mock-1' })}><option value="demo-mock">Demo (scripted, no key)</option><option value="anthropic">Anthropic</option></select></label>
+      <label>Provider<select value={design.provider} onChange={(e) => up({ provider: e.target.value, model: e.target.value === 'anthropic' ? 'claude-opus-5-5' : 'demo-mock-1' })}><option value="demo-mock">Scripted test responses (no key; not real LLM output)</option><option value="anthropic">Anthropic</option></select></label>
       <label>Model<input value={design.model} onChange={(e) => up({ model: e.target.value })} /></label>
       <label>Repetitions per source<input type="number" min={1} value={design.reps} onChange={(e) => up({ reps: Math.max(1, +e.target.value) })} /></label>
       <label>Temperature (blank = provider default)<input type="number" step="0.1" value={design.temperature ?? ''} onChange={(e) => up({ temperature: e.target.value === '' ? null : +e.target.value })} /></label>
@@ -136,7 +150,7 @@ function Step3({ design, setDesign, roles, approved, apiKey, setApiKey, onStart,
       <label>Preview for<select value={pv} onChange={(e) => setPv(e.target.value)}><option value="__generic__">Generic (no role)</option>{roles.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}</select></label>
       {preview && <><p className="muted">Template {preview.template_version}. Sent to provider: {preview.sent_to_provider}.</p><pre tabIndex={0}>{preview.prompt}</pre></>}</div>
     <div className="card"><h3>Estimate and confirm</h3>
-      <button className="secondary" onClick={async () => setEst(await api.estimate(design))}>Estimate cost and calls</button>
+      <button className="secondary" onClick={async () => setEst(await api.estimate({ ...design, project_id: demo.id, arms: { ...design.arms, mechanical: design.arms.mechanical && demo.has_reference } }))}>Estimate cost and calls</button>
       {est && <p>{est.llm_calls_min}–{est.llm_calls_max} LLM calls (max counts one validation retry each) + {est.mechanical_runs} mechanical runs. ≈{est.approx_input_tokens_per_call} input / {est.approx_output_tokens_per_call} output tokens per call. {est.cost_usd_max !== null ? `Worst-case cost ≈ $${est.cost_usd_max.toFixed(2)}.` : 'Enter prices above to see a cost.'}</p>}
       <label><input type="checkbox" disabled={!est} checked={confirm} onChange={(e) => setConfirm(e.target.checked)} /> I have reviewed the prompt, data sent and estimate, and want to run.</label></div>
     <div className="actions"><span /><button disabled={!canRun} onClick={onStart}>Start run</button></div>

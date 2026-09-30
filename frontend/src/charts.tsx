@@ -43,8 +43,8 @@ export function RobustnessHeat({ rows, arms }: { rows: { path: string; share_by_
     </svg>)
 }
 
-export function AnchorStrip({ variable, stats, reference, rows, arms, colors }: { variable: string; stats: Stats; reference: Record<string, number>; rows: { arm: string; run_id: number; a: Record<string, number> }[]; arms: string[]; colors: Record<string, string> }) {
-  const W = 640, L = 130, H0 = 78, rh = 22, all = ['reference', ...arms], H = H0 + rh * all.length + 22, span = stats.max - stats.min || 1
+export function AnchorStrip({ variable, stats, reference, rows, arms, colors }: { variable: string; stats: Stats; reference?: Record<string, number>; rows: { arm: string; run_id: number; a: Record<string, number> }[]; arms: string[]; colors: Record<string, string> }) {
+  const W = 640, L = 130, H0 = 78, rh = 22, all = [...(reference ? ['reference'] : []), ...arms], H = H0 + rh * all.length + 22, span = stats.max - stats.min || 1
   const x = (v: number) => L + ((v - stats.min) / span) * (W - L - 12), max = Math.max(...stats.histogram.map((b) => b.count), 1)
   return (
     <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Anchors proposed for ${variable} by anchor source, over the observed distribution`} fontFamily="system-ui,sans-serif" fontSize={11}>
@@ -52,7 +52,7 @@ export function AnchorStrip({ variable, stats, reference, rows, arms, colors }: 
       {stats.histogram.map((b, i) => <rect key={i} x={x(b.lower) + 1} y={H0 - (b.count / max) * (H0 - 12)} width={Math.max(1, x(b.upper) - x(b.lower) - 2)} height={(b.count / max) * (H0 - 26)} fill="#d9dde1" />)}
       {all.map((a, k) => {
         const yy = H0 + rh * k + rh / 2, col = a === 'reference' ? '#000' : colors[a]
-        const rs = a === 'reference' ? [{ run_id: 0, a: reference }] : rows.filter((r) => r.arm === a)
+        const rs = a === 'reference' && reference ? [{ run_id: 0, a: reference }] : rows.filter((r) => r.arm === a)
         return <g key={a}><text x={L - 8} y={yy + 4} textAnchor="end" fill={INK}>{a === 'reference' ? "analyst's original" : short(a)}</text>
           {rs.map((r) => <g key={r.run_id}><line x1={x(r.a.full_non_membership)} x2={x(r.a.full_membership)} y1={yy} y2={yy} stroke={col} strokeOpacity={a === 'reference' ? 1 : 0.25} strokeWidth={a === 'reference' ? 2 : 4} strokeDasharray={a === 'reference' ? '5 3' : undefined} />
             <circle cx={x(r.a.crossover)} cy={yy} r={3.2} fill={col} stroke="#fff" strokeWidth={0.8}><title>{`${a} run ${r.run_id}: ${r.a.full_non_membership.toFixed(2)} / ${r.a.crossover.toFixed(2)} / ${r.a.full_membership.toFixed(2)}`}</title></circle></g>)}</g>

@@ -16,13 +16,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app import rclient
 from app.db.models import Base, Judgment, RoleApproval, RResult, Run, RunConfig
-from app.demo import DemoProvider, load_demo
+from app.demo import DemoProvider
 from app.domain.mechanical import MechanicalConfig, generate_skaaning_configs
 from app.domain.prompt import RoleSpec, load_default_template, prompt_hash
 from app.engine.report import validation_report
 from app.engine.rinput import build_r_input
 from app.engine.runner import CostModel, EngineContext, run_batch
 from app.llm.base import LLMProvider
+from app.projects import get_project
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _engine: Engine | None = None
@@ -35,6 +36,11 @@ def init_db(url: str | None = None) -> None:
     url = url or os.environ.get("SA_QCA_DB", "sqlite:///sa_qca.sqlite")
     _engine = create_engine(url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(_engine)
+    from sqlalchemy import inspect, text
+
+    if "project_id" not in {c["name"] for c in inspect(_engine).get_columns("run_config")}:  # older dev databases
+        with _engine.begin() as conn:
+            conn.execute(text("ALTER TABLE run_config ADD COLUMN project_id VARCHAR DEFAULT 'demo'"))
     _SessionLocal = sessionmaker(_engine, expire_on_commit=False)
 
 
@@ -72,9 +78,9 @@ def approve_roles(roles: list[dict[str, Any]], approved_by: str) -> dict[str, An
         return {"roles_hash": h, "approved_by": row.approved_by, "approved_at": _iso(row.approved_at)}
 
 
-def make_provider(kind: str, api_key: str | None) -> LLMProvider:
+def make_provider(kind: str, api_key: str | None, project: dict[str, Any]) -> LLMProvider:
     if kind == "demo-mock":
-        return DemoProvider()
+        return DemoProvider(project)
     if kind == "anthropic":
         if not api_key:
             raise ValueError("an API key is required for the Anthropic provider")
@@ -85,8 +91,11 @@ def make_provider(kind: str, api_key: str | None) -> LLMProvider:
 
 
 def start_run(req: dict[str, Any], api_key: str | None) -> int:
-    demo = load_demo()
+    with session() as s0:
+        demo = get_project(s0, req.get("project_id", "demo"))
     arms = req["arms"]
+    if arms.get("mechanical") and not demo["has_reference"]:
+        raise ValueError("the mechanical source needs the analyst's original anchors and cutoffs; add them in step 1")
     roles: list[RoleSpec] = []
     if arms.get("roles"):
         with session() as s:
@@ -95,15 +104,19 @@ def start_run(req: dict[str, Any], api_key: str | None) -> int:
                 raise PermissionError("roles must be approved before running")
             chosen = set(arms["roles"])
             roles = [RoleSpec(r["name"], r["description"]) for r in appr.roles if r["name"] in chosen]
-    provider = make_provider(req["provider"], api_key)
+    provider = make_provider(req["provider"], api_key, demo)
     template = load_default_template()
     prices = {}
     if req.get("price_in") is not None and req.get("price_out") is not None:
         prices = {req["model"]: (float(req["price_in"]), float(req["price_out"]))}
     sampling = {"temperature": req["temperature"]} if req.get("temperature") is not None else {}
+    mech = generate_skaaning_configs(demo["data"], demo["reference"], demo["directions"], demo["outcome"],
+                                     demo["reference_cutoffs"]) if arms.get("mechanical") else []
+    ref_cfg = (MechanicalConfig("analyst_reference", "analyst's original specification", _reference_decision(demo), source="analyst")
+               if demo["has_reference"] else None)
     with session() as s:
         cfg = RunConfig(
-            template_version="default_v1", template_sha256=prompt_hash(template), provider=provider.name,
+            project_id=req.get("project_id", "demo"), template_version="default_v1", template_sha256=prompt_hash(template), provider=provider.name,
             model=req["model"], sampling=sampling, reps=int(req["reps"]), tolerance=float(req.get("tolerance", 0.0)),
             spend_cap=req.get("spend_cap"), roles=[r.__dict__ for r in roles],
             arms=[*(f"role:{r.name}" for r in roles), *(["generic"] if arms.get("generic") else []),
@@ -113,9 +126,6 @@ def start_run(req: dict[str, Any], api_key: str | None) -> int:
         s.add(cfg)
         s.commit()
         cfg_id = cfg.id
-    mech = generate_skaaning_configs(demo["data"], demo["reference"], demo["directions"], demo["outcome"],
-                                     demo["reference_cutoffs"]) if arms.get("mechanical") else []
-    ref_cfg = MechanicalConfig("analyst_reference", "analyst's original specification", _reference_decision(demo), source="analyst")
     BATCHES[cfg_id] = {"state": "running", "cancel": False}
 
     def work() -> None:
@@ -192,7 +202,7 @@ def results(cfg_id: int) -> dict[str, Any]:
                 "solutions": {k: _models(sols.get(k)) for k in ("complex", "parsimonious", "intermediate")} if rr else None,
             })
         return {"config": {"id": cfg.id, "model": cfg.model, "provider": cfg.provider, "template_version": cfg.template_version,
-                           "reps": cfg.reps, "arms": cfg.arms, "created_at": _iso(cfg.created_at)},
+                           "reps": cfg.reps, "arms": cfg.arms, "project_id": cfg.project_id, "created_at": _iso(cfg.created_at)},
                 "runs": out, "report": validation_report(s, cfg_id)}
 
 
@@ -207,8 +217,9 @@ def now_iso() -> str:
 
 def rationales(cfg_id: int, arm: str | None = None, variable: str | None = None) -> list[dict[str, Any]]:
     out = []
-    outcome_name = load_demo()["outcome"]
     with session() as s:
+        cfg0 = s.get(RunConfig, cfg_id)
+        outcome_name = get_project(s, cfg0.project_id if cfg0 else "demo")["outcome"]
         for r in s.query(Run).filter_by(run_config_id=cfg_id).order_by(Run.id).all():
             if arm and r.arm != arm:
                 continue

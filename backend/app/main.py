@@ -2,15 +2,16 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.api import service
-from app.demo import SUGGESTED_ROLES, load_demo
+from app.demo import SUGGESTED_ROLES
 from app.domain.prompt import RoleSpec, load_default_template, prompt_warnings, render_prompt
 from app.domain.schema import build_decision_schema
+from app.projects import ProjectError, configure, create_upload, get_project, project_summary
 
 app = FastAPI(title="SA-QCA backend")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -30,6 +31,26 @@ class ApproveIn(BaseModel):
 
 class PreviewIn(BaseModel):
     role: RoleIn | None = None
+    project_id: str = "demo"
+
+
+class VariableIn(BaseModel):
+    name: str
+    role: str
+    direction: str = "positive"
+    construct_definition: str = ""
+    instrument: str = ""
+    units: str = ""
+    dir_exp: int | None = None
+    anchors: dict[str, float | None] | None = None
+
+
+class ConfigureIn(BaseModel):
+    name: str = ""
+    case_description: str = ""
+    variables: list[VariableIn]
+    reference_cutoffs: dict[str, float | None] | None = None
+    drop_missing: bool = False
 
 
 class ArmsIn(BaseModel):
@@ -39,6 +60,7 @@ class ArmsIn(BaseModel):
 
 
 class RunIn(BaseModel):
+    project_id: str = "demo"
     role_set_hash: str = ""
     arms: ArmsIn
     reps: int = 3
@@ -56,19 +78,43 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-def _var_json(v: Any) -> dict[str, Any]:
-    return {**v.__dict__}
+def _project(pid: str) -> dict[str, Any]:
+    try:
+        with service.session() as s:
+            return get_project(s, pid)
+    except ProjectError as e:
+        raise HTTPException(404 if "unknown" in str(e) else 400, str(e)) from e
 
 
 @app.get("/api/demo")
 def demo() -> dict[str, Any]:
-    d = load_demo()
-    return {
-        "name": d["project"]["name"], "case_description": d["project"]["case_description"],
-        "variables": [_var_json(v) for v in d["variables"]],
-        "reference": d["reference"], "reference_cutoffs": d["reference_cutoffs"], "dir_exp": d["dir_exp"],
-        "warnings": prompt_warnings(d["variables"]), "n_cases": len(next(iter(d["data"].values()))),
-    }
+    return project_summary(_project("demo"))
+
+
+@app.get("/api/projects/{pid}")
+def project(pid: str) -> dict[str, Any]:
+    return project_summary(_project(pid))
+
+
+@app.post("/api/projects/upload")
+async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
+    try:
+        with service.session() as s:
+            return create_upload(s, file.filename or "upload", await file.read())
+    except ProjectError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.post("/api/projects/{pid}/configure")
+def configure_project(pid: str, body: ConfigureIn) -> dict[str, Any]:
+    cfg = body.model_dump()
+    cfg["variables"] = [{**v, "anchors": v["anchors"] if v["anchors"] and any(x is not None for x in v["anchors"].values()) else None}
+                        for v in cfg["variables"]]
+    try:
+        with service.session() as s:
+            return configure(s, pid, cfg)
+    except ProjectError as e:
+        raise HTTPException(400, str(e)) from e
 
 
 @app.post("/api/roles/suggest")
@@ -87,7 +133,7 @@ def approve(body: ApproveIn) -> dict[str, Any]:
 
 @app.post("/api/prompt/preview")
 def preview(body: PreviewIn) -> dict[str, Any]:
-    d = load_demo()
+    d = _project(body.project_id)
     role = RoleSpec(body.role.name, body.role.description) if body.role else None
     prompt = render_prompt(load_default_template(), d["variables"], d["project"]["case_description"], role)
     return {"prompt": prompt, "template_version": "default_v1", "warnings": prompt_warnings(d["variables"]),
@@ -97,7 +143,7 @@ def preview(body: PreviewIn) -> dict[str, Any]:
 
 @app.post("/api/runs/estimate")
 def estimate(body: RunIn) -> dict[str, Any]:
-    d = load_demo()
+    d = _project(body.project_id)
     n_agents = len(body.arms.roles) + (1 if body.arms.generic else 0)
     calls = n_agents * body.reps
     role = RoleSpec("x", "y")
@@ -106,7 +152,12 @@ def estimate(body: RunIn) -> dict[str, Any]:
     if body.arms.mechanical:
         from app.domain.mechanical import generate_skaaning_configs
 
-        mech = len(generate_skaaning_configs(d["data"], d["reference"], d["directions"], d["outcome"], d["reference_cutoffs"]))
+        if not d["has_reference"]:
+            raise HTTPException(400, "the mechanical source needs the analyst's original anchors and cutoffs; add them in step 1")
+        try:
+            mech = len(generate_skaaning_configs(d["data"], d["reference"], d["directions"], d["outcome"], d["reference_cutoffs"]))
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from e
     out: dict[str, Any] = {"llm_calls_min": calls, "llm_calls_max": calls * 2, "mechanical_runs": mech,
                            "approx_input_tokens_per_call": tokens_in, "approx_output_tokens_per_call": 900,
                            "cost_usd_max": None}
