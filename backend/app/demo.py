@@ -51,8 +51,8 @@ class DemoProvider(LLMProvider):
     name = "demo-mock"
     ROLE_BIAS = {"Small-firm owner-manager": -0.06, "Vendor account manager": -0.10, "Independent IT consultant": 0.10}
 
-    def __init__(self) -> None:
-        self.demo = load_demo()
+    def __init__(self, project: dict[str, Any] | None = None) -> None:
+        self.demo = project or load_demo()
         self.counts: dict[str, int] = {}
 
     def complete(self, prompt: str, *, model: str, sampling: dict[str, Any]) -> LLMResponse:
@@ -63,7 +63,9 @@ class DemoProvider(LLMProvider):
             self.counts[role] = self.counts.get(role, 0) + 1
         n = self.counts.get(role, 1)
         h = int(hashlib.sha256(f"{role}|{n}".encode()).hexdigest(), 16)
-        bias = self.ROLE_BIAS.get(role, 0.0)
+        bias = self.ROLE_BIAS.get(role)
+        if bias is None:  # any other role name: a fixed pseudo-random lean derived from the name
+            bias = (int(hashlib.sha256(role.encode()).hexdigest(), 16) % 200 - 100) / 1000
         jitter = ((h % 1000) / 1000 - 0.5) * 0.06
         bad = (not retry and h % 6 == 0) or (retry and h % 20 == 0)
         text = json.dumps(self._decision(bias + jitter, break_order=bad), indent=2)
@@ -72,11 +74,18 @@ class DemoProvider(LLMProvider):
     def _decision(self, shift: float, break_order: bool) -> dict[str, Any]:
         d = self.demo
         stats = {v.name: v.stats for v in d["variables"]}
+        first_cond = next(v.name for v in d["variables"] if v.role == "condition")
 
         def block(n: str) -> dict[str, Any]:
             span = stats[n]["max"] - stats[n]["min"]
-            a = {k: min(stats[n]["max"], max(stats[n]["min"], d["reference"][n][k] + shift * span)) for k in ANCHOR_KEYS}
-            if break_order and n == "TRUST":
+            if n in d["reference"]:
+                base = d["reference"][n]
+            else:  # no analyst anchors: quartiles, purely so the test provider can answer
+                lo, mid, hi = stats[n]["q1"], stats[n]["median"], stats[n]["q3"]
+                neg = d["directions"][n] == "negative"
+                base = {"full_non_membership": hi if neg else lo, "crossover": mid, "full_membership": lo if neg else hi}
+            a = {k: min(stats[n]["max"], max(stats[n]["min"], base[k] + shift * span)) for k in ANCHOR_KEYS}
+            if break_order and n == first_cond:
                 a["full_membership"], a["full_non_membership"] = a["full_non_membership"], a["full_membership"]
             why = {
                 "full_non_membership": "Below this the cases are clearly outside the set given how the construct is measured.",
@@ -85,7 +94,7 @@ class DemoProvider(LLMProvider):
             }
             return {"anchors": {k: round(a[k], 4) for k in ANCHOR_KEYS}, "rationale": why}
 
-        tt = dict(d["reference_cutoffs"])
+        tt = dict(d["reference_cutoffs"]) or {"consistency_threshold": 0.8, "frequency_threshold": 1, "pri_threshold": None}
         return {
             "conditions": {v.name: block(v.name) for v in d["variables"] if v.role == "condition"},
             "outcome": block(d["outcome"]),

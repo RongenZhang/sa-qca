@@ -34,7 +34,7 @@ export function Dashboard({ results, demo }: { results: Results; demo: Demo }) {
   const arms = useMemo(() => d?.arms ?? [], [d])
   const colors = useMemo(() => armColors(arms), [arms])
   return (
-    <section aria-labelledby="s5"><h2 id="s5">Step 5: Results dashboard</h2>
+    <section aria-labelledby="s5"><h2 id="s5">Step 5: Results dashboard</h2><p className="muted">Compare what each source finds with your original solution.</p>
       <p className="muted">Run #{id} · {results.config.provider}/{results.config.model} · template {results.config.template_version}. Every number traces to a stored run (run ids shown). The analyst's original specification is run through the identical pipeline as the reference.</p>
       <div className="card row">
         <label>Solution type<select value={kind} onChange={(e) => setKind(e.target.value)}><option>parsimonious</option><option>complex</option><option>intermediate</option></select></label>

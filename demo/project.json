@@ -1,6 +1,6 @@
 {
   "name": "Demo: technology adoption in small firms (synthetic)",
-  "case_description": "Synthetic data for exploring the tool. Sixty small firms are described by managerial trust in the vendor, support from top management, available resources, and the degree to which a new system was adopted. By construction there are two routes to high adoption: trust together with management support, or ample resources in firms that do not rely on the vendor (low trust).",
+  "case_description": "The cases are 60 owner-managed firms with 10 to 49 employees, in light manufacturing and wholesale distribution. Over an 18-month period the same software vendor offered each of them a cloud-based inventory and order-management system. Adoption was a voluntary decision taken by the owner-manager, usually after a trial period, and it carried real costs: staff had to be retrained, spreadsheets and paper routines were retired, and the firm became dependent on the vendor for updates and support. Firms differed in how far the owner-manager trusted the vendor, in how strongly the firm's management team backed a change, and in how much slack the firm had in budget and staff time. At the end of the period, adoption was observed as the extent to which the system was actually used in daily operations, from a nominal login that changed nothing, through partial use for some tasks, to full reliance for ordering, invoicing and stock control. The study asks which firms ended up using the system extensively.",
   "variables": [
     {
       "name": "TRUST",
@@ -64,5 +64,6 @@
       "frequency_threshold": 1,
       "pri_threshold": 0.5
     }
-  }
+  },
+  "demo_note": "Synthetic data, built so that there are two routes to high adoption: trust together with management support, or ample resources in firms with low trust. This note is for you as a demo user only. It is never sent to a model, because a real study cannot know its routes in advance."
 }

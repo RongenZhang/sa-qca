@@ -29,6 +29,10 @@ class RunConfig(Base):
     tolerance: Mapped[float] = mapped_column(Float, default=0.0)
     spend_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
     roles: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    project_id: Mapped[str] = mapped_column(String, default="demo")
+    # Frozen at run start so later project edits never change what this run used.
+    project_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    role_approval: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     arms: Mapped[list[Any]] = mapped_column(JSON, default=list)
     mechanical_params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
@@ -111,3 +115,16 @@ class RoleApproval(Base):
     roles_hash: Mapped[str] = mapped_column(String, unique=True)
     approved_by: Mapped[str] = mapped_column(String)
     approved_at: Mapped[datetime] = mapped_column(DateTime, default=_now)
+
+
+class ProjectRow(Base):
+    """An uploaded dataset plus the analyst's variable definitions. The demo project lives in demo/ files."""
+
+    __tablename__ = "project"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, default="Untitled project")
+    filename: Mapped[str] = mapped_column(String)
+    dataset_sha256: Mapped[str] = mapped_column(String)
+    dataset_csv: Mapped[str] = mapped_column(Text)  # normalised CSV of the uploaded table
+    config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

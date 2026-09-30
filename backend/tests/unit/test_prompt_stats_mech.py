@@ -110,3 +110,22 @@ def test_skaaning_factorial_size_and_outcome_untouched():
     assert hi.decision["conditions"]["X"]["anchors"]["crossover"] == 50 + 0.05 * 99
     assert hi.decision["conditions"]["Z"]["anchors"] == ref["Z"]
     assert {c.id for c in cfgs if c.perturbation["kind"] != "skaaning_factorial"} == {"consistency_-0.1", "consistency_+0.1", "frequency_+1"}
+
+
+def test_case_description_warnings():
+    from app.domain.prompt import case_description_warnings
+
+    assert "empty" in case_description_warnings("  ")[0]
+    assert "short" in case_description_warnings("x" * 100)[0]
+    assert case_description_warnings("x" * 450) == []
+
+
+def test_demo_prompt_does_not_leak_the_built_in_routes():
+    """The demo's construction note must stay out of anything an agent reads."""
+    from app.demo import load_demo
+
+    d = load_demo()
+    prompt = render_prompt(load_default_template(), d["variables"], d["project"]["case_description"], RoleSpec("R", "d"))
+    for leak in ("by construction", "two routes", "route", "low trust", "Synthetic", "synthetic"):
+        assert leak not in prompt, leak
+    assert len(d["project"]["case_description"]) > 600 and d["project"]["demo_note"]
