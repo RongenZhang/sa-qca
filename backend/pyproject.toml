@@ -12,6 +12,7 @@ include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.domain" = ["templates/*.j2"]
+"app.exports" = ["replicate.R"]
 
 [tool.ruff]
 line-length = 120

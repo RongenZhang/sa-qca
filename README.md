@@ -2,7 +2,7 @@
 
 Stakeholder-based calibration sensitivity analysis for fuzzy-set QCA.
 
-> **Status:** a candidate protocol for discussion, not a finished standard. Under development (phase 4 of 6).
+> **Status:** a candidate protocol for discussion, not a finished standard. Under development (phase 5 of 6).
 
 ## Design rules
 - Agents (or the mechanical generator, or the analyst) supply anchors and truth-table cutoffs. Nothing else is discretionary.
@@ -37,3 +37,16 @@ The five-step wizard (data, roles with approval, run design with exact-prompt pr
 Step 1 > "Upload my own data": CSV (comma, semicolon or tab) or Excel (first sheet), up to 10 MB. Pick the outcome and conditions, give each a construct definition and measurement instrument, declare its direction, and optionally enter your original anchors, cutoffs and directional expectations (needed for the mechanical source and the comparison with your published solution). Variable names must start with a letter and use letters, digits and underscores (a QCA requirement); rename columns in your file if needed. Rows with missing values are dropped only if you tick the listwise-deletion box, and the count is recorded. The uploaded file stays in the local database; models receive only definitions and summary statistics.
 
 "Scripted test responses" in step 3 works on any project and needs no key, but it is a stand-in, not LLM output.
+
+## Exports and verification (phase 5)
+On the results screen: **Download replication bundle (ZIP)**, **Open report (HTML)** (print to PDF from the browser) and **Verify bundle**.
+
+The bundle holds the analysis data, project definitions, approved roles, every rendered prompt, every raw model response, the decisions handed to R, the R code, recorded results, environment versions and a SHA-256 manifest; it never contains API keys. To re-run the QCA computation with no LLM calls:
+```bash
+unzip sa-qca-run2-replication.zip -d bundle && cd bundle && Rscript replication/replicate.R
+```
+or check the manifest first and then replicate:
+```bash
+cd backend && .venv/bin/python -m app.exports.verify path/to/sa-qca-run2-replication.zip
+```
+Exit status 0 means every stored QCA result was reproduced exactly. Model answers themselves are not regenerated; the stored raw responses are the record. The report includes a draft AI-use statement filled from the run's actual models, parameters and retry policy (for scripted test runs it carries a warning not to use it).

@@ -12,8 +12,10 @@ from app.llm.base import LLMProvider, LLMResponse, ProviderError, RateLimitError
 class AnthropicProvider(LLMProvider):
     name = "anthropic"
 
-    def __init__(self, api_key: str, client: Any | None = None) -> None:
-        self._client = client or anthropic.Anthropic(api_key=api_key, max_retries=0)
+    def __init__(self, api_key: str, client: Any | None = None, workspace_id: str | None = None) -> None:
+        # Keys that are not scoped to a workspace must name one on every request.
+        headers = {"anthropic-workspace-id": workspace_id} if workspace_id else None
+        self._client = client or anthropic.Anthropic(api_key=api_key, max_retries=0, default_headers=headers)
 
     def __repr__(self) -> str:  # never expose the key
         return "AnthropicProvider(api_key=<redacted>)"

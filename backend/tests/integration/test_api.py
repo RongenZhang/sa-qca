@@ -91,3 +91,14 @@ def test_dashboard_reference_rationales_and_traceability(client):
     assert att["run_id"] == agent["run_id"] and att["rendered_prompt"] and att["prompt_sha256"]
     assert "Independent" not in att["rendered_prompt"]
     assert "analyst_reference" not in {r["arm"] for r in res["runs"]}
+
+
+def test_provider_errors_are_surfaced_in_status(client, monkeypatch):
+    from app.llm.base import ProviderError
+    from app.llm.mock import MockProvider
+
+    monkeypatch.setattr(service, "make_provider", lambda *a, **k: MockProvider([ProviderError("BadRequestError: workspace header needed")] * 5))
+    body = {"provider": "anthropic", "model": "m", "reps": 1, "arms": {"roles": [], "generic": True, "mechanical": False}}
+    rid = client.post("/api/runs", json=body, headers={"X-Provider-Key": "k", "X-Provider-Workspace": "w"}).json()["run_config_id"]
+    st = wait(client, rid)
+    assert st["status_counts"].get("provider_error") == 1 and st["provider_errors"] == ["BadRequestError: workspace header needed"]

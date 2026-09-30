@@ -15,7 +15,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import rclient
-from app.db.models import Base, Judgment, RoleApproval, RResult, Run, RunConfig
+from app.db.models import Base, CallLog, Judgment, RoleApproval, RResult, Run, RunConfig
 from app.demo import DemoProvider
 from app.domain.mechanical import MechanicalConfig, generate_skaaning_configs
 from app.domain.prompt import RoleSpec, load_default_template, prompt_hash
@@ -80,7 +80,7 @@ def approve_roles(roles: list[dict[str, Any]], approved_by: str) -> dict[str, An
         return {"roles_hash": h, "approved_by": row.approved_by, "approved_at": _iso(row.approved_at)}
 
 
-def make_provider(kind: str, api_key: str | None, project: dict[str, Any]) -> LLMProvider:
+def make_provider(kind: str, api_key: str | None, project: dict[str, Any], workspace_id: str | None = None) -> LLMProvider:
     if kind == "demo-mock":
         return DemoProvider(project)
     if kind == "anthropic":
@@ -88,11 +88,11 @@ def make_provider(kind: str, api_key: str | None, project: dict[str, Any]) -> LL
             raise ValueError("an API key is required for the Anthropic provider")
         from app.llm.anthropic_provider import AnthropicProvider
 
-        return AnthropicProvider(api_key)
+        return AnthropicProvider(api_key, workspace_id=workspace_id)
     raise ValueError(f"unknown provider {kind}")
 
 
-def start_run(req: dict[str, Any], api_key: str | None) -> int:
+def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None = None) -> int:
     with session() as s0:
         demo = get_project(s0, req.get("project_id", "demo"))
     arms = req["arms"]
@@ -106,7 +106,7 @@ def start_run(req: dict[str, Any], api_key: str | None) -> int:
                 raise PermissionError("roles must be approved before running")
             chosen = set(arms["roles"])
             roles = [RoleSpec(r["name"], r["description"]) for r in appr.roles if r["name"] in chosen]
-    provider = make_provider(req["provider"], api_key, demo)
+    provider = make_provider(req["provider"], api_key, demo, workspace_id)
     template = load_default_template()
     prices = {}
     if req.get("price_in") is not None and req.get("price_out") is not None:
@@ -184,7 +184,9 @@ def status(cfg_id: int) -> dict[str, Any]:
         counts: dict[str, int] = {}
         for r in runs:
             counts[r.status] = counts.get(r.status, 0) + 1
-        return {"state": BATCHES.get(cfg_id, {}).get("state", "unknown"), "total": len(runs),
+        perr = [d for (d,) in s.query(CallLog.detail).join(Run, CallLog.run_id == Run.id)
+                .filter(Run.run_config_id == cfg_id, CallLog.kind == "provider_error").distinct().limit(3).all()]
+        return {"state": BATCHES.get(cfg_id, {}).get("state", "unknown"), "provider_errors": perr, "total": len(runs),
                 "done": len(runs) - counts.get("pending", 0), "status_counts": counts,
                 "report": validation_report(s, cfg_id)}
 
