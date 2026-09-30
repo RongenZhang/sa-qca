@@ -100,3 +100,14 @@ class RResult(Base):
     r_input: Mapped[dict[str, Any]] = mapped_column(JSON)
     r_output: Mapped[dict[str, Any]] = mapped_column(JSON)
     judgment: Mapped[Judgment] = relationship(back_populates="r_result")
+
+
+class RoleApproval(Base):
+    """Protocol step 1: the role set is locked by an explicit approval."""
+
+    __tablename__ = "role_approval"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    roles: Mapped[list[Any]] = mapped_column(JSON)
+    roles_hash: Mapped[str] = mapped_column(String, unique=True)
+    approved_by: Mapped[str] = mapped_column(String)
+    approved_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

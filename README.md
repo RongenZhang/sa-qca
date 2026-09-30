@@ -2,7 +2,7 @@
 
 Stakeholder-based calibration sensitivity analysis for fuzzy-set QCA.
 
-> **Status:** a candidate protocol for discussion, not a finished standard. Under development (phase 2 of 6).
+> **Status:** a candidate protocol for discussion, not a finished standard. Under development (phase 3 of 6).
 
 ## Design rules
 - Agents (or the mechanical generator, or the analyst) supply anchors and truth-table cutoffs. Nothing else is discretionary.
@@ -25,3 +25,10 @@ Validator, prompt renderer, mechanical generator, provider abstraction (Anthropi
 ```bash
 cd backend && python3.11 -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/bin/pytest
 ```
+
+## Phase 3: wizard UI (demo project, no API key needed)
+```bash
+cd backend && .venv/bin/uvicorn app.main:app --port 8001      # needs Rscript with QCA installed
+cd frontend && npm install && npm run dev                    # http://localhost:5173
+```
+The five-step wizard (data, roles with approval, run design with exact-prompt preview and cost/call estimate, live run, results) runs against a scripted demo provider. Choose "Anthropic" in step 3 and enter a key to use a real model; the key stays in browser memory and is sent per request only.

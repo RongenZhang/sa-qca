@@ -162,7 +162,7 @@ def run_batch(
     cancel: Callable[[], bool] = lambda: False,
 ) -> str:
     """Executes (or resumes) a batch. Returns 'completed', 'cancelled' or 'halted_cap'."""
-    if not config.runs:
+    if session.query(Run).filter_by(run_config_id=config.id).count() == 0:
         for rep in range(config.reps):  # interleave arms so a halt leaves balanced data
             for r in roles:
                 session.add(Run(run_config_id=config.id, arm=f"role:{r.name}", rep_index=rep))
@@ -173,7 +173,7 @@ def run_batch(
         session.commit()
     by_name = {r.name: r for r in roles}
     mech = {m.id: m for m in mechanical}
-    for run in list(config.runs):
+    for run in session.query(Run).filter_by(run_config_id=config.id).order_by(Run.id).all():
         if run.status in TERMINAL and run.status != "provider_error":
             continue
         if cancel():
