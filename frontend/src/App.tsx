@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Demo, type Results, type Role, type RunReq, type Status } from './api'
+import { Dashboard } from './Dashboard'
 import { Hist } from './Hist'
 
 const STEPS = ['1 Data & variables', '2 Stakeholder roles', '3 Run design', '4 Run', '5 Results']
@@ -165,18 +166,6 @@ function Step4({ runId, status, setStatus, onDone, goResults }: { runId: number 
 }
 
 function Step5({ results, demo, expert }: { results: Results | null; demo: Demo; expert: boolean }) {
-  const [kind, setKind] = useState<'parsimonious' | 'complex' | 'intermediate'>('parsimonious')
-  const arms = useMemo(() => Array.from(new Set(results?.runs.map((r) => r.arm) ?? [])), [results])
   if (!results) return <p>No results yet. Complete a run first.</p>
-  const fmt = (m: string[][] | undefined) => (m && m.length ? m.map((x) => x.join(' + ')).join('  |  ') : '–')
-  return (<section aria-labelledby="s5"><h2 id="s5">Step 5: Results</h2>
-    <p className="muted">Run #{results.config.id} · {results.config.provider}/{results.config.model} · template {results.config.template_version}. Full comparison dashboard arrives in phase 4. Every row below is a stored run.</p>
-    <label>Solution type<select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}><option>parsimonious</option><option>complex</option><option>intermediate</option></select></label>
-    {arms.map((arm) => (<div className="card" key={arm}><h3>{arm}</h3>
-      <table><thead><tr><th>Rep</th><th>Status</th><th>Attempts</th><th>{kind} solution</th><th>{demo.variables.find((v) => v.role === 'condition')?.name} crossover</th></tr></thead><tbody>
-        {results.runs.filter((r) => r.arm === arm).map((r) => <tr key={r.run_id}><td>{r.mechanical_id ?? r.rep + 1}</td>
-          <td className={r.status === 'invalid' ? 'warn' : ''}>{r.status}</td><td>{r.attempts || '–'}</td><td>{fmt(r.solutions?.[kind])}</td>
-          <td>{r.anchors ? r.anchors[demo.variables[0].name]?.crossover?.toFixed(3) : '–'}</td></tr>)}</tbody></table></div>))}
-    {expert && <pre>{JSON.stringify(results, null, 1)}</pre>}
-  </section>)
+  return <><Dashboard results={results} demo={demo} />{expert && <pre>{JSON.stringify(results, null, 1)}</pre>}</>
 }

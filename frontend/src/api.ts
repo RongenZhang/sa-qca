@@ -23,3 +23,20 @@ export const api = {
   cancel: (id: number) => j<unknown>(`/api/runs/${id}/cancel`, {}),
   results: (id: number) => j<Results>(`/api/runs/${id}/results`),
 }
+
+export type Dashboard = {
+  kind: string; metric: string; metric_doc: string; model_policy: string; arms: string[]; reference_solution: string | null
+  matrix: { run_id: number; arm: string; rep: number | string; status: string; solution: string | null }[]
+  robustness: { path: string; share_by_arm: Record<string, number | null>; across_roles: string }[]
+  similarity: { run_id: number; arm: string; score: number }[]
+  distinct_solutions: Record<string, number>; valid_runs: Record<string, number>
+  path_frequency: { path: string; counts: Record<string, number> }[]
+}
+export type Rationale = { run_id: number; arm: string; rep: number; variable: string; anchor: string; value: number; rationale: string; source: string; attempt_id: number | null }
+export type Attempt = { id: number; run_id: number; kind: string; provider: string; model_id: string | null; prompt_sha256: string; rendered_prompt: string; raw_response: string | null; tokens_in: number | null; tokens_out: number | null; validation_ok: boolean | null; validation_errors: unknown[]; started_at: string }
+export const api2 = {
+  dashboard: (id: number, kind: string, metric: string, policy: string) => j<Dashboard>(`/api/runs/${id}/dashboard?kind=${kind}&metric=${metric}&policy=${policy}`),
+  metrics: () => j<Record<string, string>>('/api/similarity/metrics'),
+  rationales: (id: number, arm: string, variable: string) => j<Rationale[]>(`/api/runs/${id}/rationales?${new URLSearchParams({ ...(arm ? { arm } : {}), ...(variable ? { variable } : {}) })}`),
+  attempt: (id: number) => j<Attempt>(`/api/attempts/${id}`),
+}

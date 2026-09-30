@@ -155,3 +155,36 @@ def run_results(cfg_id: int) -> dict[str, Any]:
         return service.results(cfg_id)
     except KeyError as e:
         raise HTTPException(404, "unknown run") from e
+
+
+@app.get("/api/similarity/metrics")
+def similarity_metrics() -> dict[str, str]:
+    from app.domain.similarity import METRICS
+
+    return {k: v[1] for k, v in METRICS.items()}
+
+
+@app.get("/api/runs/{cfg_id}/dashboard")
+def dashboard(cfg_id: int, kind: str = "parsimonious", metric: str = "jaccard_terms", policy: str = "union") -> dict[str, Any]:
+    from app.domain.similarity import METRICS
+    from app.engine.dashboard import build_dashboard
+
+    if kind not in ("complex", "parsimonious", "intermediate") or metric not in METRICS or policy not in ("union", "first"):
+        raise HTTPException(400, "bad kind, metric or policy")
+    try:
+        return build_dashboard(service.results(cfg_id), kind, metric, policy)
+    except KeyError as e:
+        raise HTTPException(404, "unknown run") from e
+
+
+@app.get("/api/runs/{cfg_id}/rationales")
+def rationales(cfg_id: int, arm: str | None = None, variable: str | None = None) -> list[dict[str, Any]]:
+    return service.rationales(cfg_id, arm, variable)
+
+
+@app.get("/api/attempts/{attempt_id}")
+def attempt(attempt_id: int) -> dict[str, Any]:
+    try:
+        return service.attempt_detail(attempt_id)
+    except KeyError as e:
+        raise HTTPException(404, "unknown attempt") from e
