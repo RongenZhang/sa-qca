@@ -11,23 +11,28 @@ const q = (v: number[], p: number) => { const s = [...v].sort((a, b) => a - b), 
 const short = (a: string) => { const l = a.startsWith('role:') ? a.slice(5) : sourceLabel(a); return l.length > 16 ? l.slice(0, 15) + '…' : l }
 
 export function SimilarityBox({ data, arms, colors, distinct }: { data: { arm: string; score: number; run_id: number }[]; arms: string[]; colors: Record<string, string>; distinct: Record<string, number> }) {
-  const W = 640, H = 340, L = 44, T = 16, B = 70, cw = (W - L - 12) / Math.max(arms.length, 1), y = (v: number) => T + (1 - v) * (H - T - B)
+  const W = 640, H = 360, L = 52, T = 16, B = 84, cw = (W - L - 12) / Math.max(arms.length, 1), y = (v: number) => T + (1 - v) * (H - T - B)
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Box plot of similarity to the analyst's solution by anchor source, with every run as a point" fontFamily="system-ui,sans-serif" fontSize={11}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Similarity of each run's solution to the analyst's solution, by anchor source. Each circle is one or more runs with the same score; the number inside is how many." fontFamily="system-ui,sans-serif" fontSize={11}>
       <Bg w={W} h={H} />
-      {[0, 0.25, 0.5, 0.75, 1].map((t) => <g key={t}><line x1={L} x2={W - 8} y1={y(t)} y2={y(t)} stroke={SOFT} /><text x={L - 6} y={y(t) + 4} textAnchor="end" fill={INK}>{t}</text></g>)}
+      {[[0, 'nothing in common'], [0.5, ''], [1, 'same solution']].map(([t, lab]) => <g key={String(t)}><line x1={L} x2={W - 8} y1={y(+t)} y2={y(+t)} stroke={SOFT} /><text x={L - 6} y={y(+t) + 4} textAnchor="end" fill={INK}>{t}</text>{lab && <text x={W - 10} y={y(+t) - 4} textAnchor="end" fill="#5b6670" fontSize={10}>{lab}</text>}</g>)}
       {arms.map((a, i) => {
         const pts = data.filter((d) => d.arm === a), cx = L + cw * (i + 0.5), col = colors[a], v = pts.map((p) => p.score)
+        const groups = new Map<number, number[]>()
+        pts.forEach((p) => groups.set(p.score, [...(groups.get(p.score) ?? []), p.run_id]))
+        const many = groups.size >= 3  // a box only makes sense when the scores actually vary
         return <g key={a}>
-          {v.length > 0 && <><line x1={cx} x2={cx} y1={y(Math.max(...v))} y2={y(Math.min(...v))} stroke={col} strokeWidth={2} />
-            <rect x={cx - cw * 0.22} width={cw * 0.44} y={y(q(v, 0.75))} height={Math.max(1, y(q(v, 0.25)) - y(q(v, 0.75)))} fill={col} fillOpacity={0.25} stroke={col} strokeWidth={2} />
-            <line x1={cx - cw * 0.22} x2={cx + cw * 0.22} y1={y(q(v, 0.5))} y2={y(q(v, 0.5))} stroke={col} strokeWidth={3} /></>}
-          {pts.map((p, k) => <circle key={p.run_id} cx={cx + (((k * 37) % 21) - 10) * cw * 0.02} cy={y(p.score)} r={3.2} fill={col} stroke="#fff" strokeWidth={0.8}><title>{`${a} run ${p.run_id}: ${p.score.toFixed(3)}`}</title></circle>)}
+          {many && <><line x1={cx} x2={cx} y1={y(Math.max(...v))} y2={y(Math.min(...v))} stroke={col} strokeWidth={2} />
+            <rect x={cx - cw * 0.3} width={cw * 0.6} y={y(q(v, 0.75))} height={Math.max(1, y(q(v, 0.25)) - y(q(v, 0.75)))} fill={col} fillOpacity={0.2} stroke={col} strokeWidth={2} />
+            <line x1={cx - cw * 0.3} x2={cx + cw * 0.3} y1={y(q(v, 0.5))} y2={y(q(v, 0.5))} stroke={col} strokeWidth={3} /></>}
+          {[...groups.entries()].map(([score, ids]) => { const r = 7 + Math.min(10, Math.sqrt(ids.length) * 2.5)
+            return <g key={score}><circle cx={cx} cy={y(score)} r={r} fill={col} fillOpacity={0.85} stroke="#fff" strokeWidth={1.5}><title>{`${a}: score ${score.toFixed(2)}, ${ids.length} run(s): #${ids.join(', #')}`}</title></circle>
+              <text x={cx} y={y(score) + 4} textAnchor="middle" fill="#fff" fontWeight={700} fontSize={11}>{ids.length}</text></g> })}
           <text x={cx} y={H - B + 16} textAnchor="middle" fill={INK}>{short(a)}</text>
-          <text x={cx} y={H - B + 30} textAnchor="middle" fill="#5b6670">n={v.length}</text>
-          <text x={cx} y={H - B + 43} textAnchor="middle" fill="#5b6670">{distinct[a] ?? 0} distinct</text></g>
+          <text x={cx} y={H - B + 30} textAnchor="middle" fill="#5b6670">{v.length} runs</text>
+          <text x={cx} y={H - B + 43} textAnchor="middle" fill="#5b6670">{distinct[a] ?? 0} distinct solution{(distinct[a] ?? 0) === 1 ? '' : 's'}</text></g>
       })}
-      <text x={12} y={T + (H - T - B) / 2} transform={`rotate(-90 12 ${T + (H - T - B) / 2})`} textAnchor="middle" fill={INK}>similarity to analyst solution</text>
+      <text x={12} y={T + (H - T - B) / 2} transform={`rotate(-90 12 ${T + (H - T - B) / 2})`} textAnchor="middle" fill={INK}>similarity to the analyst's solution</text>
     </svg>)
 }
 
