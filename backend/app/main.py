@@ -4,7 +4,7 @@ from typing import Any
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.api import service
@@ -249,3 +249,41 @@ def attempt(attempt_id: int) -> dict[str, Any]:
         return service.attempt_detail(attempt_id)
     except KeyError as e:
         raise HTTPException(404, "unknown attempt") from e
+
+
+@app.get("/api/runs/{cfg_id}/bundle")
+def bundle(cfg_id: int) -> Response:
+    from app.exports.bundle import BundleError, build_zip
+
+    try:
+        with service.session() as s:
+            data = build_zip(s, cfg_id)
+    except BundleError as e:
+        raise HTTPException(404 if "unknown" in str(e) else 400, str(e)) from e
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="sa-qca-run{cfg_id}-replication.zip"'})
+
+
+@app.post("/api/runs/{cfg_id}/verify")
+def verify(cfg_id: int) -> dict[str, Any]:
+    """Builds the bundle for this run and re-runs its replication script."""
+    from app.exports.bundle import BundleError, build_zip
+    from app.exports.verify import verify_bundle
+
+    try:
+        with service.session() as s:
+            data = build_zip(s, cfg_id)
+    except BundleError as e:
+        raise HTTPException(400, str(e)) from e
+    return verify_bundle(data)
+
+
+@app.get("/api/runs/{cfg_id}/report", response_class=HTMLResponse)
+def report(cfg_id: int) -> HTMLResponse:
+    from app.exports.report import build_report
+
+    try:
+        with service.session() as s:
+            return HTMLResponse(build_report(s, cfg_id))
+    except KeyError as e:
+        raise HTTPException(404, "unknown run") from e

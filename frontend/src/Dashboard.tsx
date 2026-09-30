@@ -6,6 +6,19 @@ import { sourceLabel } from './labels'
 
 const TABS = ['Solutions', 'Robustness', 'Similarity', 'Anchors', 'Rationales', 'Validation'] as const
 type Tab = (typeof TABS)[number]
+function ExportCard({ id }: { id: number }) {
+  const [v, setV] = useState<Record<string, unknown> | 'busy' | null>(null)
+  const verify = async () => { setV('busy'); try { const r = await fetch(`/api/runs/${id}/verify`, { method: 'POST' }); setV(await r.json()) } catch (e) { setV({ ok: false, error: String(e) }) } }
+  const r = typeof v === 'object' && v ? v : null
+  return (<div className="card"><h3>Export and verify</h3>
+    <p className="muted">The bundle contains the data, prompts, raw responses, decisions, R code and checksums, and no API keys. The report is HTML: use your browser's Print to save a PDF.</p>
+    <div className="actions" style={{ justifyContent: 'flex-start' }}>
+      <a href={`/api/runs/${id}/bundle`}><button>Download replication bundle (ZIP)</button></a>
+      <a href={`/api/runs/${id}/report`} target="_blank" rel="noreferrer"><button className="secondary">Open report (HTML)</button></a>
+      <button className="secondary" disabled={v === 'busy'} onClick={verify}>{v === 'busy' ? 'Re-running R…' : 'Verify bundle'}</button></div>
+    {r && <p role="status" className={r.ok ? 'ok' : 'warn'}>{r.ok ? `Verified: ${r.n_match} of ${r.n_runs} runs reproduced exactly; ${r.n_files} files match the manifest.` : `Not verified: ${String(r.error ?? '')} ${r.n_mismatch ? `${r.n_mismatch} run(s) differ.` : ''}`}</p>}
+  </div>)
+}
 const pct = (v: number | null) => (v === null ? '–' : `${(v * 100).toFixed(0)}%`)
 
 export function Dashboard({ results, demo }: { results: Results; demo: Demo }) {
@@ -29,6 +42,7 @@ export function Dashboard({ results, demo }: { results: Results; demo: Demo }) {
         <label>Multiple models per solution<select value={policy} onChange={(e) => setPolicy(e.target.value)}><option value="union">union of all models' terms</option><option value="first">first model only</option></select></label>
         <label>Similarity metric<select value={metric} onChange={(e) => setMetric(e.target.value)}>{Object.keys(metrics).map((m) => <option key={m}>{m}</option>)}</select></label>
       </div>
+      <ExportCard id={id} />
       {d && <p className="muted">Metric: {d.metric_doc} Analyst reference solution ({d.kind}): <b>{d.reference_solution ?? 'unavailable'}</b></p>}
       {err && <p role="alert" className="warn">{err}</p>}
       <div role="tablist" aria-label="Dashboard views" className="steps">{TABS.map((t) => <span key={t} className={t === tab ? 'cur' : ''}><button role="tab" aria-selected={t === tab} onClick={() => setTab(t)}>{t}</button></span>)}</div>
