@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app import rclient
 from app.db.models import Base, Judgment, RoleApproval, RResult, Run, RunConfig
 from app.demo import DemoProvider, load_demo
-from app.domain.mechanical import generate_skaaning_configs
+from app.domain.mechanical import MechanicalConfig, generate_skaaning_configs
 from app.domain.prompt import RoleSpec, load_default_template, prompt_hash
 from app.engine.report import validation_report
 from app.engine.rinput import build_r_input
@@ -115,6 +115,7 @@ def start_run(req: dict[str, Any], api_key: str | None) -> int:
         cfg_id = cfg.id
     mech = generate_skaaning_configs(demo["data"], demo["reference"], demo["directions"], demo["outcome"],
                                      demo["reference_cutoffs"]) if arms.get("mechanical") else []
+    ref_cfg = MechanicalConfig("analyst_reference", "analyst's original specification", _reference_decision(demo), source="analyst")
     BATCHES[cfg_id] = {"state": "running", "cancel": False}
 
     def work() -> None:
@@ -129,12 +130,27 @@ def start_run(req: dict[str, Any], api_key: str | None) -> int:
             )
             try:
                 BATCHES[cfg_id]["state"] = run_batch(s, ctx, c, roles, bool(arms.get("generic")), mech,
-                                                     lambda: bool(BATCHES[cfg_id]["cancel"]))
+                                                     lambda: bool(BATCHES[cfg_id]["cancel"]), ref_cfg)
             except Exception as e:  # surface unexpected failures instead of hanging the UI
                 BATCHES[cfg_id]["state"] = f"error: {e}"
 
     threading.Thread(target=work, daemon=True).start()
     return cfg_id
+
+
+def _reference_decision(demo: dict[str, Any]) -> dict[str, Any]:
+    keys = ("full_non_membership", "crossover", "full_membership")
+
+    def block(n: str) -> dict[str, Any]:
+        return {"anchors": dict(demo["reference"][n]), "rationale": {k: "analyst's original specification" for k in keys}}
+
+    tt = demo["reference_cutoffs"]
+    return {"conditions": {v.name: block(v.name) for v in demo["variables"] if v.role == "condition"},
+            "outcome": block(demo["outcome"]),
+            "truth_table": {"consistency_threshold": tt["consistency_threshold"], "frequency_threshold": tt["frequency_threshold"],
+                            "pri_threshold": tt.get("pri_threshold"), "consistency_rationale": "analyst's original cutoff",
+                            "frequency_rationale": "analyst's original cutoff",
+                            "pri_rationale": "analyst's original cutoff" if tt.get("pri_threshold") is not None else None}}
 
 
 def cancel_run(cfg_id: int) -> None:
@@ -187,3 +203,36 @@ def _iso(dt: datetime) -> str:
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def rationales(cfg_id: int, arm: str | None = None, variable: str | None = None) -> list[dict[str, Any]]:
+    out = []
+    outcome_name = load_demo()["outcome"]
+    with session() as s:
+        for r in s.query(Run).filter_by(run_config_id=cfg_id).order_by(Run.id).all():
+            if arm and r.arm != arm:
+                continue
+            j = s.query(Judgment).filter_by(run_id=r.id).one_or_none()
+            if j is None:
+                continue
+            blocks = {**j.decision["conditions"], outcome_name: j.decision["outcome"]}
+            for name, b in blocks.items():
+                if variable and name != variable:
+                    continue
+                for k, why in b["rationale"].items():
+                    out.append({"run_id": r.id, "arm": r.arm, "rep": r.rep_index, "variable": name, "anchor": k,
+                                "value": b["anchors"][k], "rationale": why, "source": j.source, "attempt_id": j.attempt_id})
+    return out
+
+
+def attempt_detail(attempt_id: int) -> dict[str, Any]:
+    from app.db.models import RunAttempt
+
+    with session() as s:
+        a = s.get(RunAttempt, attempt_id)
+        if a is None:
+            raise KeyError(attempt_id)
+        return {"id": a.id, "run_id": a.run_id, "kind": a.attempt_kind, "provider": a.provider, "model_id": a.model_id,
+                "prompt_sha256": a.prompt_sha256, "rendered_prompt": a.rendered_prompt, "raw_response": a.raw_response,
+                "tokens_in": a.tokens_in, "tokens_out": a.tokens_out, "validation_ok": a.validation_ok,
+                "validation_errors": a.validation_errors, "started_at": _iso(a.started_at)}

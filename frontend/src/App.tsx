@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Demo, type Results, type Role, type RunReq, type Status } from './api'
+import { Dashboard } from './Dashboard'
 import { Hist } from './Hist'
+import { sourceLabel } from './labels'
 
 const STEPS = ['1 Data & variables', '2 Stakeholder roles', '3 Run design', '4 Run', '5 Results']
 const TIPS: Record<string, string> = {
@@ -115,15 +117,15 @@ function Step3({ design, setDesign, roles, approved, apiKey, setApiKey, onStart,
   useEffect(() => { api.preview(pv === '__generic__' ? null : roles.find((r) => r.name === pv) ?? null).then(setPreview).catch(() => undefined) }, [pv, roles])
   return (<section aria-labelledby="s3">
     <h2 id="s3">Step 3: Run design</h2>
-    {!approved && <p role="alert" className="warn">Approve stakeholder roles first (step 2) to include role arms.</p>}
-    <div className="card"><h3>Arms</h3>
+    {!approved && <p role="alert" className="warn">Approve stakeholder roles first (step 2) to include stakeholder sources.</p>}
+    <div className="card"><h3>Anchor sources</h3>
       {roles.map((r) => <label key={r.name}><input type="checkbox" disabled={!approved} checked={design.arms.roles.includes(r.name)} onChange={(e) => up({ arms: { ...design.arms, roles: e.target.checked ? [...design.arms.roles, r.name] : design.arms.roles.filter((n) => n !== r.name) } })} /> Stakeholder: {r.name}</label>)}
       <label><input type="checkbox" checked={design.arms.generic} onChange={(e) => up({ arms: { ...design.arms, generic: e.target.checked } })} /> Generic (same prompt, no role)</label>
       <label><input type="checkbox" checked={design.arms.mechanical} onChange={(e) => up({ arms: { ...design.arms, mechanical: e.target.checked } })} /> Mechanical (Skaaning-style perturbation of the analyst's anchors; no LLM)</label></div>
     <div className="card"><h3>Model and sampling</h3><div className="row">
       <label>Provider<select value={design.provider} onChange={(e) => up({ provider: e.target.value, model: e.target.value === 'anthropic' ? 'claude-opus-5-5' : 'demo-mock-1' })}><option value="demo-mock">Demo (scripted, no key)</option><option value="anthropic">Anthropic</option></select></label>
       <label>Model<input value={design.model} onChange={(e) => up({ model: e.target.value })} /></label>
-      <label>Repetitions per arm<input type="number" min={1} value={design.reps} onChange={(e) => up({ reps: Math.max(1, +e.target.value) })} /></label>
+      <label>Repetitions per source<input type="number" min={1} value={design.reps} onChange={(e) => up({ reps: Math.max(1, +e.target.value) })} /></label>
       <label>Temperature (blank = provider default)<input type="number" step="0.1" value={design.temperature ?? ''} onChange={(e) => up({ temperature: e.target.value === '' ? null : +e.target.value })} /></label>
       <label>Range tolerance (fraction of observed range)<input type="number" step="0.05" min={0} value={design.tolerance} onChange={(e) => up({ tolerance: +e.target.value })} /></label></div>
       {anthropic && <label>API key (kept in this tab's memory only; sent per request)<input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>}
@@ -158,25 +160,13 @@ function Step4({ runId, status, setStatus, onDone, goResults }: { runId: number 
         {status.state === 'running' && <button className="secondary" onClick={() => api.cancel(runId)}>Cancel</button>}
         {status.state !== 'running' && <button onClick={goResults}>View results</button>}</div>
       <h3>Validation report (live)</h3>
-      <table><thead><tr><th>Arm</th><th>Runs</th><th>Statuses</th><th><Tip k="invalid">Invalid</Tip> rate</th><th>1st-attempt fail</th><th>Reasons</th></tr></thead><tbody>
-        {Object.entries(status.report).map(([arm, r]) => <tr key={arm}><td>{arm}</td><td>{r.n_runs}</td><td>{Object.entries(r.status_counts).map(([k, v]) => `${k}: ${v}`).join(', ')}</td>
+      <table><thead><tr><th>Source</th><th>Runs</th><th>Statuses</th><th><Tip k="invalid">Invalid</Tip> rate</th><th>1st-attempt fail</th><th>Reasons</th></tr></thead><tbody>
+        {Object.entries(status.report).map(([arm, r]) => <tr key={arm}><td>{sourceLabel(arm)}</td><td>{r.n_runs}</td><td>{Object.entries(r.status_counts).map(([k, v]) => `${k}: ${v}`).join(', ')}</td>
           <td>{r.invalid_rate === null ? '–' : `${(r.invalid_rate * 100).toFixed(0)}%`}</td><td>{r.first_attempt_failure_rate === null ? '–' : `${(r.first_attempt_failure_rate * 100).toFixed(0)}%`}</td><td>{Object.entries(r.failure_reasons).map(([k, v]) => `${k}: ${v}`).join(', ') || '–'}</td></tr>)}</tbody></table></>}
   </section>)
 }
 
 function Step5({ results, demo, expert }: { results: Results | null; demo: Demo; expert: boolean }) {
-  const [kind, setKind] = useState<'parsimonious' | 'complex' | 'intermediate'>('parsimonious')
-  const arms = useMemo(() => Array.from(new Set(results?.runs.map((r) => r.arm) ?? [])), [results])
   if (!results) return <p>No results yet. Complete a run first.</p>
-  const fmt = (m: string[][] | undefined) => (m && m.length ? m.map((x) => x.join(' + ')).join('  |  ') : '–')
-  return (<section aria-labelledby="s5"><h2 id="s5">Step 5: Results</h2>
-    <p className="muted">Run #{results.config.id} · {results.config.provider}/{results.config.model} · template {results.config.template_version}. Full comparison dashboard arrives in phase 4. Every row below is a stored run.</p>
-    <label>Solution type<select value={kind} onChange={(e) => setKind(e.target.value as typeof kind)}><option>parsimonious</option><option>complex</option><option>intermediate</option></select></label>
-    {arms.map((arm) => (<div className="card" key={arm}><h3>{arm}</h3>
-      <table><thead><tr><th>Rep</th><th>Status</th><th>Attempts</th><th>{kind} solution</th><th>{demo.variables.find((v) => v.role === 'condition')?.name} crossover</th></tr></thead><tbody>
-        {results.runs.filter((r) => r.arm === arm).map((r) => <tr key={r.run_id}><td>{r.mechanical_id ?? r.rep + 1}</td>
-          <td className={r.status === 'invalid' ? 'warn' : ''}>{r.status}</td><td>{r.attempts || '–'}</td><td>{fmt(r.solutions?.[kind])}</td>
-          <td>{r.anchors ? r.anchors[demo.variables[0].name]?.crossover?.toFixed(3) : '–'}</td></tr>)}</tbody></table></div>))}
-    {expert && <pre>{JSON.stringify(results, null, 1)}</pre>}
-  </section>)
+  return <><Dashboard results={results} demo={demo} />{expert && <pre>{JSON.stringify(results, null, 1)}</pre>}</>
 }

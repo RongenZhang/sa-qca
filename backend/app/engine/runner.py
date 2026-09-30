@@ -143,7 +143,7 @@ def execute_mechanical_run(session: Session, ctx: EngineContext, run: Run, cfg: 
         session.add(CallLog(run_id=run.id, kind="mechanical_skipped", detail=cfg.skipped_reason or ""))
         session.commit()
         return
-    session.add(Judgment(run_id=run.id, source="mechanical", decision=cfg.decision))
+    session.add(Judgment(run_id=run.id, source=cfg.source, decision=cfg.decision))
     session.flush()
     _run_r(session, ctx, run)
     session.commit()
@@ -160,6 +160,7 @@ def run_batch(
     include_generic: bool,
     mechanical: list[MechanicalConfig],
     cancel: Callable[[], bool] = lambda: False,
+    reference: MechanicalConfig | None = None,
 ) -> str:
     """Executes (or resumes) a batch. Returns 'completed', 'cancelled' or 'halted_cap'."""
     if session.query(Run).filter_by(run_config_id=config.id).count() == 0:
@@ -168,11 +169,15 @@ def run_batch(
                 session.add(Run(run_config_id=config.id, arm=f"role:{r.name}", rep_index=rep))
             if include_generic:
                 session.add(Run(run_config_id=config.id, arm="generic", rep_index=rep))
+        if reference is not None:  # the analyst's own specification, through the identical pipeline
+            session.add(Run(run_config_id=config.id, arm="reference", rep_index=0, mechanical_id=reference.id))
         for i, m in enumerate(mechanical):
             session.add(Run(run_config_id=config.id, arm="mechanical", rep_index=i, mechanical_id=m.id))
         session.commit()
     by_name = {r.name: r for r in roles}
     mech = {m.id: m for m in mechanical}
+    if reference is not None:
+        mech[reference.id] = reference
     for run in session.query(Run).filter_by(run_config_id=config.id).order_by(Run.id).all():
         if run.status in TERMINAL and run.status != "provider_error":
             continue
@@ -180,7 +185,7 @@ def run_batch(
             return "cancelled"
         run.status = "pending"
         try:
-            if run.arm == "mechanical":
+            if run.arm in ("mechanical", "reference"):
                 execute_mechanical_run(session, ctx, run, mech[run.mechanical_id or ""])
             elif run.arm == "generic":
                 execute_agent_run(session, ctx, run, None)

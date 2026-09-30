@@ -31,6 +31,7 @@ class MechanicalConfig:
     decision: dict[str, Any] | None
     skipped_reason: str | None = None
     perturbation: dict[str, Any] = field(default_factory=dict)
+    source: str = "mechanical"  # mechanical | analyst
 
 
 def _shift_anchor(sorted_vals: list[float], x: float, shift: float) -> float:

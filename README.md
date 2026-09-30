@@ -2,7 +2,7 @@
 
 Stakeholder-based calibration sensitivity analysis for fuzzy-set QCA.
 
-> **Status:** a candidate protocol for discussion, not a finished standard. Under development (phase 3 of 6).
+> **Status:** a candidate protocol for discussion, not a finished standard. Under development (phase 4 of 6).
 
 ## Design rules
 - Agents (or the mechanical generator, or the analyst) supply anchors and truth-table cutoffs. Nothing else is discretionary.
