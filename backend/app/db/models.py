@@ -30,6 +30,9 @@ class RunConfig(Base):
     spend_cap: Mapped[float | None] = mapped_column(Float, nullable=True)
     roles: Mapped[list[Any]] = mapped_column(JSON, default=list)
     project_id: Mapped[str] = mapped_column(String, default="demo")
+    # Frozen at run start so later project edits never change what this run used.
+    project_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    role_approval: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     arms: Mapped[list[Any]] = mapped_column(JSON, default=list)
     mechanical_params: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_now)

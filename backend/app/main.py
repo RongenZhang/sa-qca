@@ -11,7 +11,7 @@ from app.api import service
 from app.demo import SUGGESTED_ROLES
 from app.domain.prompt import RoleSpec, case_description_warnings, load_default_template, prompt_warnings, render_prompt
 from app.domain.schema import build_decision_schema
-from app.projects import ProjectError, configure, create_upload, get_project, project_summary
+from app.projects import ProjectError, configure, create_upload, get_project, get_setup, project_summary
 
 app = FastAPI(title="SA-QCA backend")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -103,6 +103,15 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
             return create_upload(s, file.filename or "upload", await file.read())
     except ProjectError as e:
         raise HTTPException(400, str(e)) from e
+
+
+@app.get("/api/projects/{pid}/setup")
+def project_setup(pid: str) -> dict[str, Any]:
+    try:
+        with service.session() as s:
+            return get_setup(s, pid)
+    except ProjectError as e:
+        raise HTTPException(404 if "unknown" in str(e) else 400, str(e)) from e
 
 
 @app.post("/api/projects/{pid}/configure")

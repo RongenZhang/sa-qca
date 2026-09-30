@@ -8,7 +8,7 @@ export type RunReq = { project_id: string; role_set_hash: string; arms: { roles:
 export type RunRow = { run_id: number; arm: string; rep: number; status: string; mechanical_id: string | null; attempts: number; anchors: Record<string, Record<string, number>> | null; solutions: Record<'complex' | 'parsimonious' | 'intermediate', string[][]> | null }
 export type ArmReport = { n_runs: number; status_counts: Record<string, number>; invalid_rate: number | null; first_attempt_failure_rate: number | null; failure_reasons: Record<string, number> }
 export type Status = { state: string; total: number; done: number; status_counts: Record<string, number>; report: Record<string, ArmReport> }
-export type Results = { config: { id: number; project_id: string; model: string; provider: string; template_version: string; reps: number; arms: string[] }; runs: RunRow[]; report: Record<string, ArmReport> }
+export type Results = { config: { id: number; project_id: string; model: string; provider: string; template_version: string; reps: number; arms: string[] }; runs: RunRow[]; report: Record<string, ArmReport>; project: Demo }
 
 async function j<T>(path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
   const r = await fetch(path, body === undefined ? { headers } : { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
@@ -23,6 +23,7 @@ export const api = {
     if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText)
     return r.json() as Promise<UploadInfo>
   },
+  setup: (pid: string) => j<{ upload: UploadInfo; config: ConfigureBody }>(`/api/projects/${pid}/setup`),
   configure: (pid: string, body: ConfigureBody) => j<Demo>(`/api/projects/${pid}/configure`, body),
   suggest: () => j<{ ai_generated: boolean; roles: Role[] }>('/api/roles/suggest', {}),
   approve: (roles: Role[], approved_by: string) => j<{ roles_hash: string; approved_by: string; approved_at: string }>('/api/roles/approve', { roles, approved_by }),

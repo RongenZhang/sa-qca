@@ -38,7 +38,8 @@ export default function App() {
   const [projectId, setProjectId] = usePersisted('projectId', 'demo')
   useEffect(() => { api.project(projectId).then(setDemo).catch((e) => { setErr(String(e).replace(/^Error: /, '')); if (projectId !== 'demo') setProjectId('demo') }) }, [projectId, setProjectId])
   const switchProject = (p: Demo) => {
-    setProjectId(p.id); setDemo(p); setRunId(null); setStatus(null); setResults(null); setErr('')
+    if (p.id !== projectId) { setRunId(null); setStatus(null); setResults(null) }  // editing the same project keeps earlier runs on screen
+    setProjectId(p.id); setDemo(p); setErr('')
     setDesign((d) => ({ ...d, project_id: p.id, arms: { ...d.arms, mechanical: p.has_reference && d.arms.mechanical } }))
   }
   const snapshot = JSON.stringify(roles.map((r) => [r.name, r.description]))
@@ -63,7 +64,7 @@ export default function App() {
           {step === 2 && <Step3 demo={demo} design={design} setDesign={setDesign} roles={roles} approved={approved} apiKey={apiKey} setApiKey={setApiKey} expert={expert}
             onStart={async () => { try { const r = await api.start({ ...design, project_id: demo.id, role_set_hash: approval?.roles_hash ?? '' }, apiKey); setRunId(r.run_config_id); setStatus(null); setResults(null); setStep(3); setErr('') } catch (e) { setErr(String(e).replace(/^Error: /, '')) } }} />}
           {step === 3 && <Step4 runId={runId} status={status} setStatus={setStatus} onDone={async (id) => { setResults(await api.results(id)) }} goResults={() => setStep(4)} />}
-          {step === 4 && <Step5 results={results} demo={demo} expert={expert} />}
+          {step === 4 && <Step5 results={results} demo={results?.project ?? demo} expert={expert} />}
         </>}
       </main>
     </>
@@ -71,16 +72,18 @@ export default function App() {
 }
 
 function Step1({ demo, expert, onProject }: { demo: Demo; expert: boolean; onProject: (p: Demo) => void }) {
-  const [mode, setMode] = useState<'current' | 'upload'>('current')
+  const [mode, setMode] = useState<'current' | 'upload' | 'edit'>('current')
+  const [existing, setExisting] = useState<Awaited<ReturnType<typeof api.setup>> | null>(null)
   return (<section aria-labelledby="s1">
     <h2 id="s1">Step 1: Data and variables</h2>
     <p className="muted">Describe the phenomenon and define your conditions and outcome. This is what every agent will read.</p>
     <div className="actions" style={{ justifyContent: 'flex-start' }}>
       <button className={mode === 'current' ? '' : 'secondary'} onClick={() => setMode('current')}>Current project</button>
       <button className={mode === 'upload' ? '' : 'secondary'} onClick={() => setMode('upload')}>Upload my own data</button>
+      {!demo.is_demo && <button className="secondary" onClick={async () => { setExisting(await api.setup(demo.id)); setMode('edit') }}>Edit project</button>}
       {!demo.is_demo && <button className="secondary" onClick={async () => onProject(await api.project('demo'))}>Switch to the demo project</button>}
     </div>
-    {mode === 'upload' ? <Upload onReady={(p) => { onProject(p); setMode('current') }} /> : <>
+    {mode === 'upload' ? <Upload onReady={(p) => { onProject(p); setMode('current') }} /> : mode === 'edit' && existing ? <Upload key={demo.id} existing={{ info: existing.upload, config: existing.config }} onReady={(p) => { onProject(p); setMode('current') }} /> : <>
     <p>{demo.name} · {demo.n_cases} cases{demo.n_dropped > 0 && ` (${demo.n_dropped} rows dropped for missing values)`}. <span className="muted">{demo.case_description}</span></p>
     {demo.demo_note && <p className="card muted" role="note"><b>Note for demo users (not sent to any model):</b> {demo.demo_note}</p>}
     {!demo.has_reference && <p className="muted" role="note">No complete set of original anchors and cutoffs was given, so the mechanical source and the comparison with your published solution are unavailable for this project.</p>}

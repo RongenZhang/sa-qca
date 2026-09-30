@@ -23,7 +23,7 @@ from app.engine.report import validation_report
 from app.engine.rinput import build_r_input
 from app.engine.runner import CostModel, EngineContext, run_batch
 from app.llm.base import LLMProvider
-from app.projects import get_project
+from app.projects import get_project, project_summary
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _engine: Engine | None = None
@@ -38,9 +38,11 @@ def init_db(url: str | None = None) -> None:
     Base.metadata.create_all(_engine)
     from sqlalchemy import inspect, text
 
-    if "project_id" not in {c["name"] for c in inspect(_engine).get_columns("run_config")}:  # older dev databases
-        with _engine.begin() as conn:
-            conn.execute(text("ALTER TABLE run_config ADD COLUMN project_id VARCHAR DEFAULT 'demo'"))
+    have = {c["name"] for c in inspect(_engine).get_columns("run_config")}
+    with _engine.begin() as conn:  # older dev databases: add columns introduced later
+        for col, ddl in (("project_id", "VARCHAR DEFAULT 'demo'"), ("project_snapshot", "JSON"), ("role_approval", "JSON")):
+            if col not in have:
+                conn.execute(text(f"ALTER TABLE run_config ADD COLUMN {col} {ddl}"))
     _SessionLocal = sessionmaker(_engine, expire_on_commit=False)
 
 
@@ -114,8 +116,16 @@ def start_run(req: dict[str, Any], api_key: str | None) -> int:
                                      demo["reference_cutoffs"]) if arms.get("mechanical") else []
     ref_cfg = (MechanicalConfig("analyst_reference", "analyst's original specification", _reference_decision(demo), source="analyst")
                if demo["has_reference"] else None)
+    snapshot = project_summary(demo)
+    snapshot["dataset_sha256"] = demo["dataset_sha256"]
+    approval = None
+    if roles:
+        with session() as s1:
+            ap = s1.query(RoleApproval).filter_by(roles_hash=req.get("role_set_hash", "")).one()
+            approval = {"roles_hash": ap.roles_hash, "approved_by": ap.approved_by, "approved_at": _iso(ap.approved_at)}
     with session() as s:
         cfg = RunConfig(
+            project_snapshot=snapshot, role_approval=approval,
             project_id=req.get("project_id", "demo"), template_version="default_v1", template_sha256=prompt_hash(template), provider=provider.name,
             model=req["model"], sampling=sampling, reps=int(req["reps"]), tolerance=float(req.get("tolerance", 0.0)),
             spend_cap=req.get("spend_cap"), roles=[r.__dict__ for r in roles],
@@ -202,8 +212,10 @@ def results(cfg_id: int) -> dict[str, Any]:
                 "solutions": {k: _models(sols.get(k)) for k in ("complex", "parsimonious", "intermediate")} if rr else None,
             })
         return {"config": {"id": cfg.id, "model": cfg.model, "provider": cfg.provider, "template_version": cfg.template_version,
-                           "reps": cfg.reps, "arms": cfg.arms, "project_id": cfg.project_id, "created_at": _iso(cfg.created_at)},
-                "runs": out, "report": validation_report(s, cfg_id)}
+                           "reps": cfg.reps, "arms": cfg.arms, "project_id": cfg.project_id,
+                           "role_approval": cfg.role_approval, "created_at": _iso(cfg.created_at)},
+                "runs": out, "report": validation_report(s, cfg_id),
+                "project": cfg.project_snapshot or project_summary(get_project(s, cfg.project_id))}
 
 
 def _iso(dt: datetime) -> str:

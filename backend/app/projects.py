@@ -13,7 +13,7 @@ import uuid
 from typing import Any, cast
 
 from app.db.models import ProjectRow
-from app.demo import load_demo
+from app.demo import DEMO_DIR, load_demo
 from app.domain.prompt import VariableSpec
 from app.domain.stats import describe
 
@@ -208,7 +208,7 @@ def _build(name: str, case_description: str, header: list[str], rows: list[list[
 def get_project(session: Any, pid: str) -> dict[str, Any]:
     if pid == "demo":
         d = load_demo()
-        d.update({"id": "demo", "name": d["project"]["name"], "has_reference": True, "n_cases": len(next(iter(d["data"].values()))), "n_dropped": 0})
+        d.update({"dataset_sha256": hashlib.sha256(((DEMO_DIR / "dataset.csv")).read_bytes()).hexdigest(), "id": "demo", "name": d["project"]["name"], "has_reference": True, "n_cases": len(next(iter(d["data"].values()))), "n_dropped": 0})
         return d
     row = session.get(ProjectRow, pid)
     if row is None:
@@ -218,6 +218,7 @@ def get_project(session: Any, pid: str) -> dict[str, Any]:
     header, rows = _from_csv(row.dataset_csv)
     d = _build(row.name, row.config.get("case_description", ""), header, rows, row.config)
     d["id"] = pid
+    d["dataset_sha256"] = row.dataset_sha256
     return d
 
 
@@ -232,3 +233,15 @@ def project_summary(d: dict[str, Any]) -> dict[str, Any]:
         "demo_note": d["project"].get("demo_note", ""), "n_cases": d["n_cases"], "n_dropped": d["n_dropped"],
         "is_demo": d["id"] == "demo",
     }
+
+
+def get_setup(session: Any, pid: str) -> dict[str, Any]:
+    """Everything the setup form needs to reopen an uploaded project for editing."""
+    if pid == "demo":
+        raise ProjectError("the demo project cannot be edited; upload your own data")
+    row = session.get(ProjectRow, pid)
+    if row is None:
+        raise ProjectError("unknown project")
+    header, rows = _from_csv(row.dataset_csv)
+    return {"upload": {"project_id": pid, "filename": row.filename, "n_rows": len(rows), "columns": column_info(header, rows),
+                       "preview": {"header": header, "rows": rows[:8]}}, "config": row.config}

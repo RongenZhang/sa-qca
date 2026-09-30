@@ -165,3 +165,32 @@ def test_full_flow_on_uploaded_data_with_reference_and_negative_variable(client)
     ref = next(r for r in res["runs"] if r["arm"] == "reference")
     assert ref["status"] in ("valid", "valid_no_solution") and ref["anchors"]["B"]["full_non_membership"] == 90
     assert client.get(f"/api/runs/{rid}/rationales?variable=Y").json()
+
+
+def test_setup_returns_config_and_demo_not_editable(client):
+    pid = upload(client).json()["project_id"]
+    client.post(f"/api/projects/{pid}/configure", json=cfg(case_description="first version"))
+    s = client.get(f"/api/projects/{pid}/setup").json()
+    assert s["upload"]["n_rows"] == 40 and s["config"]["case_description"] == "first version"
+    assert {v["name"] for v in s["config"]["variables"]} == {"A", "B", "Y"}
+    assert client.get("/api/projects/demo/setup").status_code == 400
+    assert client.get("/api/projects/nope/setup").status_code == 404
+
+
+def test_edit_changes_future_prompts_but_past_runs_keep_their_snapshot(client):
+    pid = upload(client).json()["project_id"]
+    client.post(f"/api/projects/{pid}/configure", json=cfg(case_description="ORIGINAL TEXT " * 40))
+    body = {"project_id": pid, "reps": 1, "arms": {"roles": [], "generic": True, "mechanical": False}}
+    rid = client.post("/api/runs", json=body).json()["run_config_id"]
+    t0 = time.time()
+    while client.get(f"/api/runs/{rid}/status").json()["state"] == "running" and time.time() - t0 < 120:
+        time.sleep(0.3)
+    client.post(f"/api/projects/{pid}/configure", json=cfg(case_description="REVISED TEXT " * 40))
+    assert "REVISED TEXT" in client.post("/api/prompt/preview", json={"project_id": pid}).json()["prompt"]
+    res = client.get(f"/api/runs/{rid}/results").json()
+    assert res["project"]["case_description"].startswith("ORIGINAL TEXT")
+    assert res["project"]["dataset_sha256"]
+    att = client.get(f"/api/runs/{rid}/rationales").json()
+    agent = next((r for r in att if r["source"] == "agent"), None)
+    if agent:
+        assert "ORIGINAL TEXT" in client.get(f"/api/attempts/{agent['attempt_id']}").json()["rendered_prompt"]

@@ -5,15 +5,24 @@ type Col = { use: boolean; role: 'condition' | 'outcome'; direction: 'positive' 
 const blank = (): Col => ({ use: false, role: 'condition', direction: 'positive', units: '', def: '', inst: '', dirExp: '', fn: '', cr: '', fm: '' })
 const num = (s: string) => (s.trim() === '' ? null : Number(s))
 
-export function Upload({ onReady }: { onReady: (p: Demo) => void }) {
-  const [info, setInfo] = useState<UploadInfo | null>(null)
-  const [cols, setCols] = useState<Record<string, Col>>({})
-  const [name, setName] = useState('')
-  const [desc, setDesc] = useState('')
-  const [drop, setDrop] = useState(false)
-  const [cons, setCons] = useState('')
-  const [freq, setFreq] = useState('')
-  const [pri, setPri] = useState('')
+const str = (x: number | null | undefined) => (x === null || x === undefined ? '' : String(x))
+
+export function Upload({ onReady, existing }: { onReady: (p: Demo) => void; existing?: { info: UploadInfo; config: ConfigureBody } }) {
+  const ex = existing?.config
+  const [info, setInfo] = useState<UploadInfo | null>(existing?.info ?? null)
+  const [cols, setCols] = useState<Record<string, Col>>(() => {
+    if (!existing) return {}
+    return Object.fromEntries(existing.info.columns.map((c) => {
+      const v = ex?.variables.find((x) => x.name === c.name)
+      return [c.name, v ? { use: true, role: v.role as Col['role'], direction: v.direction as Col['direction'], units: v.units, def: v.construct_definition, inst: v.instrument, dirExp: str(v.dir_exp), fn: str(v.anchors?.full_non_membership), cr: str(v.anchors?.crossover), fm: str(v.anchors?.full_membership) } : blank()]
+    }))
+  })
+  const [name, setName] = useState(ex?.name ?? '')
+  const [desc, setDesc] = useState(ex?.case_description ?? '')
+  const [drop, setDrop] = useState(ex?.drop_missing ?? false)
+  const [cons, setCons] = useState(str(ex?.reference_cutoffs?.consistency_threshold))
+  const [freq, setFreq] = useState(str(ex?.reference_cutoffs?.frequency_threshold))
+  const [pri, setPri] = useState(str(ex?.reference_cutoffs?.pri_threshold))
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
   const set = (n: string, p: Partial<Col>) => setCols((c) => ({ ...c, [n]: { ...c[n], ...p } }))
@@ -40,9 +49,10 @@ export function Upload({ onReady }: { onReady: (p: Demo) => void }) {
   }
   return (
     <div className="card">
-      <h3>Upload your data</h3>
+      <h3>{existing ? 'Edit project' : 'Upload your data'}</h3>
+      {existing && <p className="muted" role="note">Edits apply to future runs and prompts. Runs you have already made keep the definitions they used.</p>}
       <p className="muted">CSV (comma, semicolon or tab) or Excel (first sheet), up to 10 MB. The file stays on this machine. Only definitions and summary statistics of the variables you choose are ever sent to a model.</p>
-      <label>Data file<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" onChange={(e) => pick(e.target.files?.[0])} /></label>
+      {!existing && <label>Data file<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" onChange={(e) => pick(e.target.files?.[0])} /></label>}
       {err && <p role="alert" className="warn">{err}</p>}
       {info && <>
         <p><b>{info.filename}</b> · {info.n_rows} rows · {info.columns.length} columns</p>
@@ -73,6 +83,6 @@ export function Upload({ onReady }: { onReady: (p: Demo) => void }) {
           <label>Frequency (cases, ≥ 1)<input inputMode="numeric" value={freq} onChange={(e) => setFreq(e.target.value)} /></label>
           <label>PRI (optional)<input inputMode="decimal" value={pri} onChange={(e) => setPri(e.target.value)} /></label></div></div>
         {missing > 0 && <label><input type="checkbox" checked={drop} onChange={(e) => setDrop(e.target.checked)} /> Drop rows with missing values in the chosen columns (listwise deletion; QCA needs complete data). The number dropped is recorded.</label>}
-        <div className="actions"><span /><button disabled={busy || used.length < 3} onClick={save}>Save project</button></div></>}
+        <div className="actions"><span /><button disabled={busy || used.length < 3} onClick={save}>{existing ? 'Save changes' : 'Save project'}</button></div></>}
     </div>)
 }
