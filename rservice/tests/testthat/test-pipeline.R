@@ -82,3 +82,11 @@ test_that("intermediate solution only when directional expectations supplied", {
   for (i in seq_along(inp$conditions)) inp$conditions[[i]]$dir_exp <- NULL
   expect_null(run_pipeline(inp)$solutions$intermediate)
 })
+
+test_that("demo dataset recovers its two built-in routes (equifinality) under the analyst's specification", {
+  r <- run_pipeline(demo_input())
+  for (kind in c("complex", "parsimonious", "intermediate")) {
+    terms <- vapply(r$solutions[[kind]]$models[[1]]$terms, function(t) t$expression, "")
+    expect_setequal(terms, c("TRUST*SUPPORT", "~TRUST*RESOURCES"))
+  }
+})
