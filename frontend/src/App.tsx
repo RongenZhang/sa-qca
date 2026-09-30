@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type Demo, type Results, type Role, type RunReq, type Status } from './api'
 import { Dashboard } from './Dashboard'
 import { Hist } from './Hist'
+import { Intro } from './Intro'
 import { Upload } from './Upload'
 import { sourceLabel } from './labels'
 
@@ -32,6 +33,8 @@ export default function App() {
   const [status, setStatus] = useState<Status | null>(null)
   const [results, setResults] = useState<Results | null>(null)
 
+  const [showIntro, setShowIntro] = useState(() => { try { return localStorage.getItem('saqca.introSeen') !== '1' } catch { return true } })
+  const closeIntro = () => { setShowIntro(false); try { localStorage.setItem('saqca.introSeen', '1') } catch { /* ignore */ } }
   const [projectId, setProjectId] = usePersisted('projectId', 'demo')
   useEffect(() => { api.project(projectId).then(setDemo).catch((e) => { setErr(String(e).replace(/^Error: /, '')); if (projectId !== 'demo') setProjectId('demo') }) }, [projectId, setProjectId])
   const switchProject = (p: Demo) => {
@@ -45,9 +48,11 @@ export default function App() {
   return (
     <>
       <div className="banner" role="note">SA-QCA is a <b>candidate protocol for discussion</b>, not a finished standard. {demo?.is_demo && 'The demo data are synthetic. '}
+        <button className="secondary" style={{ padding: '2px 10px' }} onClick={() => setShowIntro((v) => !v)} aria-expanded={showIntro}>About this tool</button>{' '}
         <label style={{ display: 'inline' }}><input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} /> Expert view (raw JSON)</label></div>
       <main>
         <h1>Stakeholder Anchors (SA-QCA)</h1>
+        {showIntro && <Intro onClose={closeIntro} />}
         <nav aria-label="Protocol steps"><ol className="steps">
           {STEPS.map((s, i) => <li key={s} className={(i === step ? 'cur ' : '') + (done[i] ? 'done' : '')}><button aria-current={i === step ? 'step' : undefined} onClick={() => setStep(i)}>{s}</button></li>)}
         </ol></nav>
@@ -69,6 +74,7 @@ function Step1({ demo, expert, onProject }: { demo: Demo; expert: boolean; onPro
   const [mode, setMode] = useState<'current' | 'upload'>('current')
   return (<section aria-labelledby="s1">
     <h2 id="s1">Step 1: Data and variables</h2>
+    <p className="muted">Describe the phenomenon and define your conditions and outcome. This is what every agent will read.</p>
     <div className="actions" style={{ justifyContent: 'flex-start' }}>
       <button className={mode === 'current' ? '' : 'secondary'} onClick={() => setMode('current')}>Current project</button>
       <button className={mode === 'upload' ? '' : 'secondary'} onClick={() => setMode('upload')}>Upload my own data</button>
@@ -97,6 +103,7 @@ function Step2({ roles, setRoles, approval, approved, onApprove }: { roles: Role
   const move = (i: number, d: number) => { const a = [...roles]; const j = i + d; if (j < 0 || j >= a.length) return; [a[i], a[j]] = [a[j], a[i]]; setRoles(a) }
   return (<section aria-labelledby="s2">
     <h2 id="s2">Step 2: Stakeholder roles</h2>
+    <p className="muted">Roles come from your own cases, not from us. Nothing runs until you approve them.</p>
     <p className="muted">Roles come from the study's own cases and constructs. Write them yourself, or ask for suggestions (AI-generated, editable). Nothing runs until you approve the set.</p>
     <div className="actions" style={{ justifyContent: 'flex-start' }}>
       <button className="secondary" onClick={async () => { const s = await api.suggest(); setRoles([...roles, ...s.roles.map((r) => ({ ...r, ai: true }))]) }}>Suggest roles (AI)</button>
@@ -132,6 +139,7 @@ function Step3({ demo, design, setDesign, roles, approved, apiKey, setApiKey, on
   useEffect(() => { api.preview(pv === '__generic__' ? null : roles.find((r) => r.name === pv) ?? null, demo.id).then(setPreview).catch(() => undefined) }, [pv, roles, demo.id])
   return (<section aria-labelledby="s3">
     <h2 id="s3">Step 3: Run design</h2>
+    <p className="muted">Choose the anchor sources, check exactly what will be sent, then confirm the estimate.</p>
     {!approved && <p role="alert" className="warn">Approve stakeholder roles first (step 2) to include stakeholder sources.</p>}
     <div className="card"><h3>Anchor sources</h3>
       {roles.map((r) => <label key={r.name}><input type="checkbox" disabled={!approved} checked={design.arms.roles.includes(r.name)} onChange={(e) => up({ arms: { ...design.arms, roles: e.target.checked ? [...design.arms.roles, r.name] : design.arms.roles.filter((n) => n !== r.name) } })} /> Stakeholder: {r.name}</label>)}
@@ -170,6 +178,7 @@ function Step4({ runId, status, setStatus, onDone, goResults }: { runId: number 
   }, [runId]) // eslint-disable-line react-hooks/exhaustive-deps
   if (runId === null) return <p>No run started yet. Configure one in step 3.</p>
   return (<section aria-labelledby="s4"><h2 id="s4">Step 4: Run</h2>
+    <p className="muted">Runs complete one by one. Invalid answers are counted, not repaired.</p>
     {status && <><progress value={status.done} max={status.total} aria-label="Run progress" /> <p role="status">{status.done}/{status.total} runs · state: <b>{status.state}</b></p>
       <div className="actions" style={{ justifyContent: 'flex-start' }}>
         {status.state === 'running' && <button className="secondary" onClick={() => api.cancel(runId)}>Cancel</button>}
