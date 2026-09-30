@@ -1,0 +1,10 @@
+services:
+  rservice:
+    build: ./rservice
+    ports: ["8000:8000"]
+  backend:
+    build: ./backend
+    environment:
+      RSERVICE_URL: http://rservice:8000
+    ports: ["8001:8001"]
+    depends_on: [rservice]

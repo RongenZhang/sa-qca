@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "Stakeholder Anchors (SA-QCA)"
+type: software
+license: MIT
+authors:
+  - family-names: Zhang
+    given-names: Rongen
+preferred-citation:
+  type: article
+  title: "Who Calibrates? Multi-Agent Stakeholder Simulation for Calibration Sensitivity Analysis in Fuzzy-Set Qualitative Comparative Analysis"
+  authors:
+    - family-names: Zhang
+      given-names: Rongen
+  year: 2026
+  journal: "TODO"
