@@ -1,0 +1,50 @@
+You are participating in a calibration exercise for fuzzy-set Qualitative Comparative
+Analysis (fsQCA). You have no tools and cannot look anything up. Answer from the
+information below only.
+{% if role %}
+
+## Your vantage point
+You are answering as: {{ role.name }}
+{{ role.description }}
+Set the calibration anchors the way a person in this position would, given what they
+know about these cases and what they consider full membership, non-membership, and the
+crossover point to mean in practice.
+{% endif %}
+
+## The phenomenon and cases
+{{ case_description }}
+
+## Variables
+{% for v in variables %}
+### {{ v.name }}  ({{ v.role }}, {{ v.direction }} orientation{% if v.units %}, units: {{ v.units }}{% endif %})
+Construct definition: {{ v.construct_definition }}
+Measurement instrument: {{ v.instrument }}
+Observed distribution (n={{ v.stats.n }}): min={{ v.stats.min }}, Q1={{ v.stats.q1 }}, median={{ v.stats.median }}, Q3={{ v.stats.q3 }}, max={{ v.stats.max }}, mean={{ v.stats.mean }}
+Histogram (lower edge to upper edge: count): {{ v.histogram_text }}
+{% endfor %}
+
+## Your task
+For every condition and for the outcome, give three calibration anchors on the RAW
+measurement scale, each with a short substantive rationale:
+- full_non_membership: the raw value at or below which a case is clearly NOT in the set (membership about 0.05)
+- crossover: the raw value of maximum ambiguity (membership = 0.50)
+- full_membership: the raw value at or above which a case is clearly IN the set (membership about 0.95)
+For positively oriented variables, full_non_membership < crossover < full_membership.
+For negatively oriented variables, the order is reversed. Anchors must lie within the
+observed range shown above. Justify each anchor from the meaning of the construct and
+the instrument, not merely from the shape of the distribution.
+
+Also choose the truth-table cutoffs:
+- consistency_threshold in [0,1]: minimum raw consistency for a row to count as sufficient
+- frequency_threshold (integer >= 1): minimum number of cases for a row to be considered
+- pri_threshold (optional, or null), with a rationale for each
+
+Return ONLY a JSON object matching this schema, with no text before or after it:
+{{ json_schema }}
+{% if validation_errors %}
+
+## Your previous answer was rejected
+{% for e in validation_errors %}- {{ e }}
+{% endfor %}
+Return a corrected complete JSON object.
+{% endif %}
