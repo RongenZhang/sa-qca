@@ -19,6 +19,18 @@ function ExportCard({ id }: { id: number }) {
     {r && <p role="status" className={r.ok ? 'ok' : 'warn'}>{r.ok ? `Verified: ${r.n_match} of ${r.n_runs} runs reproduced exactly; ${r.n_files} files match the manifest.` : `Not verified: ${String(r.error ?? '')} ${r.n_mismatch ? `${r.n_mismatch} run(s) differ.` : ''}`}</p>}
   </div>)
 }
+function solutionCounts(d: D): { source: string; solution: string; runs: number; similarity: number | null }[] {
+  const score = new Map(d.similarity.map((x) => [x.run_id, x.score]))
+  const g = new Map<string, { source: string; solution: string; runs: number; similarity: number | null }>()
+  for (const m of d.matrix) {
+    if (m.solution === null) continue
+    const k = m.arm + '\u0000' + m.solution
+    const cur = g.get(k) ?? { source: m.arm, solution: m.solution, runs: 0, similarity: score.get(m.run_id) ?? null }
+    cur.runs += 1
+    g.set(k, cur)
+  }
+  return [...g.values()].sort((a, b) => a.source.localeCompare(b.source) || b.runs - a.runs)
+}
 const pct = (v: number | null) => (v === null ? '–' : `${(v * 100).toFixed(0)}%`)
 
 export function Dashboard({ results, demo }: { results: Results; demo: Demo }) {
@@ -57,8 +69,14 @@ export function Dashboard({ results, demo }: { results: Results; demo: Demo }) {
         <ChartFrame title="Robustness of the analyst's paths" data={d.robustness.map((r) => ({ path: r.path, across_roles: r.across_roles, ...r.share_by_arm }))} note="Share of valid runs, per source, whose solution contains each path of the analyst's original solution.">
           {d.robustness.length ? <RobustnessHeat rows={d.robustness} arms={arms} /> : <p>No reference solution to evaluate.</p>}</ChartFrame>
         <ul>{d.robustness.map((r) => <li key={r.path}><b>{r.path}</b>: {r.across_roles === 'all roles' ? 'appears under every stakeholder reading' : r.across_roles === 'one role only' ? 'appears under only one stakeholder reading' : r.across_roles}</li>)}</ul></>}
-      {d && tab === 'Similarity' && <ChartFrame title="Similarity to the analyst's solution" data={d.similarity.map((s) => ({ ...s, distinct_solutions_in_arm: d.distinct_solutions[s.arm] }))} note={`Metric: ${d.metric}. Points are individual runs; box = quartiles.`}>
-        {d.reference_solution ? <SimilarityBox data={d.similarity} arms={arms} colors={colors} distinct={d.distinct_solutions} /> : <p>No reference solution.</p>}</ChartFrame>}
+      {d && tab === 'Similarity' && <>
+        <div className="card"><h3>How to read this</h3>
+          <p>Each run applies one set of anchors and cutoffs and produces a QCA solution. The score compares that solution with the analyst's own: <b>1 = the same solution, 0 = nothing in common</b> (metric: {d.metric}). A circle groups runs that got the same score, and the number inside is how many. A source whose runs all land at 1 agrees with the analyst; a source with circles lower down reads the measure differently enough to change the finding.</p></div>
+        <ChartFrame title="Similarity to the analyst's solution" data={d.similarity.map((s) => ({ ...s, distinct_solutions_in_source: d.distinct_solutions[s.arm] }))} note="One row of the CSV per run.">
+          {d.reference_solution ? <SimilarityBox data={d.similarity} arms={arms} colors={colors} distinct={d.distinct_solutions} /> : <p>No reference solution.</p>}</ChartFrame>
+        <ChartFrame title="Which solutions each source produced" data={solutionCounts(d).map((r) => ({ ...r }))} note="Runs per source, grouped by the solution they produced.">
+          <table><thead><tr><th>Source</th><th>Solution</th><th>Runs</th><th>Similarity</th></tr></thead><tbody>
+            {solutionCounts(d).map((r, i) => <tr key={i}><td>{sourceLabel(r.source)}</td><td>{r.solution}</td><td>{r.runs}</td><td>{r.similarity === null ? '–' : r.similarity.toFixed(2)}</td></tr>)}</tbody></table></ChartFrame></>}
       {tab === 'Anchors' && demo.variables.map((v) => <ChartFrame key={v.name} title={`Anchors: ${v.name}`} data={results.runs.filter((r) => r.anchors).map((r) => ({ run_id: r.run_id, arm: r.arm, variable: v.name, ...(v.role === 'outcome' ? r.anchors!.outcome ?? r.anchors![v.name] : r.anchors![v.name]) }))} note="Proposed anchors per source, over the observed distribution.">
         <AnchorStrip variable={v.name} stats={v.stats} reference={demo.reference[v.name]} arms={arms} colors={colors}
           rows={results.runs.filter((r) => r.anchors && r.arm !== 'reference').map((r) => ({ arm: r.arm, run_id: r.run_id, a: (r.anchors![v.name] ?? r.anchors!.outcome) as Record<string, number> }))} /></ChartFrame>)}
