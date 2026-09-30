@@ -1,0 +1,9 @@
+.git
+**/node_modules
+**/.venv
+**/*.sqlite
+**/__pycache__
+frontend/dist
+backend/tests
+docs
+deploy

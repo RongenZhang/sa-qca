@@ -1,12 +1,17 @@
 import asyncio
 import json
+import os
+import re
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from app import config
 from app.api import service
 from app.demo import SUGGESTED_ROLES
 from app.domain.prompt import RoleSpec, case_description_warnings, load_default_template, prompt_warnings, render_prompt
@@ -14,6 +19,34 @@ from app.domain.schema import build_decision_schema
 from app.projects import ProjectError, configure, create_upload, get_project, get_setup, project_summary
 
 app = FastAPI(title="SA-QCA backend")
+SID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next: Any) -> Response:
+    resp: Response = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["Referrer-Policy"] = "no-referrer"  # the session token may appear in a query string
+    return resp
+
+
+def get_sid(x_session: str | None = Header(default=None), sid: str | None = Query(default=None)) -> str | None:
+    """Per-browser capability token (header, or query string for EventSource and download links)."""
+    tok = x_session or sid
+    if tok is not None and not SID_RE.match(tok):
+        raise HTTPException(400, "bad session token")
+    return tok
+
+
+def owned_run(cfg_id: int, sid: str | None = Depends(get_sid)) -> int:
+    if not service.owns(cfg_id, sid):
+        raise HTTPException(404, "unknown run")  # same answer whether it is missing or someone else's
+    return cfg_id
+
+
+def not_on_demo() -> None:
+    if config.demo_only():
+        raise HTTPException(403, "uploads are disabled on this public demo; run the tool locally to use your own data")
 app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
                    allow_methods=["*"], allow_headers=["*"])
 
@@ -79,6 +112,8 @@ def health() -> dict[str, str]:
 
 
 def _project(pid: str) -> dict[str, Any]:
+    if config.demo_only() and pid != "demo":
+        raise HTTPException(403, "only the demo project is available on this public demo")
     try:
         with service.session() as s:
             return get_project(s, pid)
@@ -97,7 +132,7 @@ def project(pid: str) -> dict[str, Any]:
 
 
 @app.post("/api/projects/upload")
-async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
+async def upload(file: UploadFile = File(...), _: None = Depends(not_on_demo)) -> dict[str, Any]:
     try:
         with service.session() as s:
             return create_upload(s, file.filename or "upload", await file.read())
@@ -106,7 +141,7 @@ async def upload(file: UploadFile = File(...)) -> dict[str, Any]:
 
 
 @app.get("/api/projects/{pid}/setup")
-def project_setup(pid: str) -> dict[str, Any]:
+def project_setup(pid: str, _: None = Depends(not_on_demo)) -> dict[str, Any]:
     try:
         with service.session() as s:
             return get_setup(s, pid)
@@ -115,7 +150,7 @@ def project_setup(pid: str) -> dict[str, Any]:
 
 
 @app.post("/api/projects/{pid}/configure")
-def configure_project(pid: str, body: ConfigureIn) -> dict[str, Any]:
+def configure_project(pid: str, body: ConfigureIn, _: None = Depends(not_on_demo)) -> dict[str, Any]:
     cfg = body.model_dump()
     cfg["variables"] = [{**v, "anchors": v["anchors"] if v["anchors"] and any(x is not None for x in v["anchors"].values()) else None}
                         for v in cfg["variables"]]
@@ -178,9 +213,14 @@ def estimate(body: RunIn) -> dict[str, Any]:
 
 @app.post("/api/runs")
 def create_run(body: RunIn, x_provider_key: str | None = Header(default=None),
-               x_provider_workspace: str | None = Header(default=None)) -> dict[str, Any]:
+               x_provider_workspace: str | None = Header(default=None),
+               sid: str | None = Depends(get_sid)) -> dict[str, Any]:
+    if sid is None:
+        raise HTTPException(400, "missing session token")
     try:
-        return {"run_config_id": service.start_run(body.model_dump(), x_provider_key, x_provider_workspace)}
+        return {"run_config_id": service.start_run(body.model_dump(), x_provider_key, x_provider_workspace, sid)}
+    except service.Busy as e:
+        raise HTTPException(429, str(e)) from e
     except PermissionError as e:
         raise HTTPException(403, str(e)) from e
     except ValueError as e:
@@ -188,18 +228,18 @@ def create_run(body: RunIn, x_provider_key: str | None = Header(default=None),
 
 
 @app.post("/api/runs/{cfg_id}/cancel")
-def cancel(cfg_id: int) -> dict[str, str]:
+def cancel(cfg_id: int = Depends(owned_run)) -> dict[str, str]:
     service.cancel_run(cfg_id)
     return {"status": "cancelling"}
 
 
 @app.get("/api/runs/{cfg_id}/status")
-def run_status(cfg_id: int) -> dict[str, Any]:
+def run_status(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
     return service.status(cfg_id)
 
 
 @app.get("/api/runs/{cfg_id}/events")
-async def events(cfg_id: int) -> StreamingResponse:
+async def events(cfg_id: int = Depends(owned_run)) -> StreamingResponse:
     async def gen() -> Any:
         while True:
             st = service.status(cfg_id)
@@ -212,7 +252,7 @@ async def events(cfg_id: int) -> StreamingResponse:
 
 
 @app.get("/api/runs/{cfg_id}/results")
-def run_results(cfg_id: int) -> dict[str, Any]:
+def run_results(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
     try:
         return service.results(cfg_id)
     except KeyError as e:
@@ -227,7 +267,7 @@ def similarity_metrics() -> dict[str, str]:
 
 
 @app.get("/api/runs/{cfg_id}/dashboard")
-def dashboard(cfg_id: int, kind: str = "parsimonious", metric: str = "jaccard_terms", policy: str = "union") -> dict[str, Any]:
+def dashboard(cfg_id: int = Depends(owned_run), kind: str = "parsimonious", metric: str = "jaccard_terms", policy: str = "union") -> dict[str, Any]:
     from app.domain.similarity import METRICS
     from app.engine.dashboard import build_dashboard
 
@@ -240,12 +280,14 @@ def dashboard(cfg_id: int, kind: str = "parsimonious", metric: str = "jaccard_te
 
 
 @app.get("/api/runs/{cfg_id}/rationales")
-def rationales(cfg_id: int, arm: str | None = None, variable: str | None = None) -> list[dict[str, Any]]:
+def rationales(cfg_id: int = Depends(owned_run), arm: str | None = None, variable: str | None = None) -> list[dict[str, Any]]:
     return service.rationales(cfg_id, arm, variable)
 
 
 @app.get("/api/attempts/{attempt_id}")
-def attempt(attempt_id: int) -> dict[str, Any]:
+def attempt(attempt_id: int, sid: str | None = Depends(get_sid)) -> dict[str, Any]:
+    if not service.attempt_owned(attempt_id, sid):
+        raise HTTPException(404, "unknown attempt")
     try:
         return service.attempt_detail(attempt_id)
     except KeyError as e:
@@ -253,7 +295,7 @@ def attempt(attempt_id: int) -> dict[str, Any]:
 
 
 @app.get("/api/runs/{cfg_id}/bundle")
-def bundle(cfg_id: int) -> Response:
+def bundle(cfg_id: int = Depends(owned_run)) -> Response:
     from app.exports.bundle import BundleError, build_zip
 
     try:
@@ -266,7 +308,7 @@ def bundle(cfg_id: int) -> Response:
 
 
 @app.post("/api/runs/{cfg_id}/verify")
-def verify(cfg_id: int) -> dict[str, Any]:
+def verify(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
     """Builds the bundle for this run and re-runs its replication script."""
     from app.exports.bundle import BundleError, build_zip
     from app.exports.verify import verify_bundle
@@ -280,7 +322,7 @@ def verify(cfg_id: int) -> dict[str, Any]:
 
 
 @app.get("/api/runs/{cfg_id}/report", response_class=HTMLResponse)
-def report(cfg_id: int) -> HTMLResponse:
+def report(cfg_id: int = Depends(owned_run)) -> HTMLResponse:
     from app.exports.report import build_report
 
     try:
@@ -288,3 +330,21 @@ def report(cfg_id: int) -> HTMLResponse:
             return HTMLResponse(build_report(s, cfg_id))
     except KeyError as e:
         raise HTTPException(404, "unknown run") from e
+
+
+@app.get("/api/mode")
+def mode() -> dict[str, Any]:
+    return {"mode": "demo" if config.demo_only() else "full", "max_reps": config.max_reps(), "max_roles": config.max_roles(),
+            "retention_hours": config.retention_hours()}
+
+
+@app.on_event("startup")
+def _startup() -> None:
+    if config.demo_only():
+        service.start_janitor(config.retention_hours())
+
+
+# Single-container deployment: serve the built frontend from the same origin (mounted last so /api wins).
+_static = os.environ.get("SA_QCA_STATIC_DIR")
+if _static and Path(_static).is_dir():
+    app.mount("/", StaticFiles(directory=_static, html=True), name="static")

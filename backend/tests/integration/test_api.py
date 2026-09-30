@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript
 @pytest.fixture
 def client(tmp_path):
     service.init_db(f"sqlite:///{tmp_path}/t.sqlite")
-    return TestClient(app)
+    return TestClient(app, headers={"X-Session": "test-visitor-0001"})
 
 
 def wait(client, rid, timeout=240):

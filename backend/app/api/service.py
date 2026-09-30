@@ -14,7 +14,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app import rclient
+from app import config, rclient
 from app.db.models import Base, CallLog, Judgment, RoleApproval, RResult, Run, RunConfig
 from app.demo import DemoProvider
 from app.domain.mechanical import MechanicalConfig, generate_skaaning_configs
@@ -40,7 +40,7 @@ def init_db(url: str | None = None) -> None:
 
     have = {c["name"] for c in inspect(_engine).get_columns("run_config")}
     with _engine.begin() as conn:  # older dev databases: add columns introduced later
-        for col, ddl in (("project_id", "VARCHAR DEFAULT 'demo'"), ("project_snapshot", "JSON"), ("role_approval", "JSON")):
+        for col, ddl in (("project_id", "VARCHAR DEFAULT 'demo'"), ("project_snapshot", "JSON"), ("role_approval", "JSON"), ("owner", "VARCHAR")):
             if col not in have:
                 conn.execute(text(f"ALTER TABLE run_config ADD COLUMN {col} {ddl}"))
     _SessionLocal = sessionmaker(_engine, expire_on_commit=False)
@@ -92,7 +92,30 @@ def make_provider(kind: str, api_key: str | None, project: dict[str, Any], works
     raise ValueError(f"unknown provider {kind}")
 
 
-def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None = None) -> int:
+class Busy(Exception):
+    """Too many runs in progress (public demo)."""
+
+
+def _check_demo_limits(req: dict[str, Any], sid: str | None) -> None:
+    if not config.demo_only():
+        return
+    if req["provider"] != "demo-mock":
+        raise ValueError("this public demo uses scripted responses only; run the tool locally to use a real model")
+    if req.get("project_id", "demo") != "demo":
+        raise PermissionError("only the demo project is available on this public demo")
+    if int(req["reps"]) > config.max_reps() or len(req["arms"].get("roles", [])) > config.max_roles():
+        raise ValueError(f"the public demo allows at most {config.max_reps()} repetitions and {config.max_roles()} roles")
+    running = [b for b in BATCHES.values() if b["state"] == "running"]
+    if any(b.get("owner") == sid for b in running):
+        raise Busy("you already have a run in progress; wait for it to finish")
+    if len(running) >= config.max_concurrent_runs():
+        raise Busy("the demo is busy; please try again in a minute")
+
+
+def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None = None, sid: str | None = None) -> int:
+    _check_demo_limits(req, sid)
+    if config.demo_only():
+        api_key = workspace_id = None  # nothing a visitor sends is ever used or stored
     with session() as s0:
         demo = get_project(s0, req.get("project_id", "demo"))
     arms = req["arms"]
@@ -125,7 +148,7 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
             approval = {"roles_hash": ap.roles_hash, "approved_by": ap.approved_by, "approved_at": _iso(ap.approved_at)}
     with session() as s:
         cfg = RunConfig(
-            project_snapshot=snapshot, role_approval=approval,
+            owner=sid, project_snapshot=snapshot, role_approval=approval,
             project_id=req.get("project_id", "demo"), template_version="default_v1", template_sha256=prompt_hash(template), provider=provider.name,
             model=req["model"], sampling=sampling, reps=int(req["reps"]), tolerance=float(req.get("tolerance", 0.0)),
             spend_cap=req.get("spend_cap"), roles=[r.__dict__ for r in roles],
@@ -136,7 +159,7 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
         s.add(cfg)
         s.commit()
         cfg_id = cfg.id
-    BATCHES[cfg_id] = {"state": "running", "cancel": False}
+    BATCHES[cfg_id] = {"state": "running", "cancel": False, "owner": sid}
 
     def work() -> None:
         with session() as s:
@@ -149,10 +172,12 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
                 CostModel(prices), req.get("spend_cap"),
             )
             try:
-                BATCHES[cfg_id]["state"] = run_batch(s, ctx, c, roles, bool(arms.get("generic")), mech,
-                                                     lambda: bool(BATCHES[cfg_id]["cancel"]), ref_cfg)
+                state = run_batch(s, ctx, c, roles, bool(arms.get("generic")), mech,
+                                  lambda: bool(BATCHES.get(cfg_id, {}).get("cancel")), ref_cfg)
             except Exception as e:  # surface unexpected failures instead of hanging the UI
-                BATCHES[cfg_id]["state"] = f"error: {e}"
+                state = f"error: {e}"
+            if cfg_id in BATCHES:
+                BATCHES[cfg_id]["state"] = state
 
     threading.Thread(target=work, daemon=True).start()
     return cfg_id
@@ -261,3 +286,62 @@ def attempt_detail(attempt_id: int) -> dict[str, Any]:
                 "prompt_sha256": a.prompt_sha256, "rendered_prompt": a.rendered_prompt, "raw_response": a.raw_response,
                 "tokens_in": a.tokens_in, "tokens_out": a.tokens_out, "validation_ok": a.validation_ok,
                 "validation_errors": a.validation_errors, "started_at": _iso(a.started_at)}
+
+
+def owns(cfg_id: int, sid: str | None) -> bool:
+    """A run is visible only to the browser that started it. Runs with no owner (local, older databases) are open."""
+    with session() as s:
+        cfg = s.get(RunConfig, cfg_id)
+        return cfg is not None and (cfg.owner is None or cfg.owner == sid)
+
+
+def attempt_owned(attempt_id: int, sid: str | None) -> bool:
+    from app.db.models import RunAttempt
+
+    with session() as s:
+        a = s.get(RunAttempt, attempt_id)
+        run = s.get(Run, a.run_id) if a else None
+        return run is not None and owns(run.run_config_id, sid)
+
+
+def purge_old(hours: int) -> int:
+    """Deletes runs (and their attempts, judgments, results) older than `hours`, plus old role approvals."""
+    from datetime import timedelta
+
+    cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=hours)
+    n = 0
+    with session() as s:
+        for cfg in s.query(RunConfig).filter(RunConfig.created_at < cutoff).all():
+            if BATCHES.get(cfg.id, {}).get("state") == "running":
+                continue
+            run_ids = [r.id for r in s.query(Run).filter_by(run_config_id=cfg.id).all()]
+            if run_ids:
+                jids = [j.id for j in s.query(Judgment).filter(Judgment.run_id.in_(run_ids)).all()]
+                if jids:
+                    s.query(RResult).filter(RResult.judgment_id.in_(jids)).delete(synchronize_session=False)
+                s.query(Judgment).filter(Judgment.run_id.in_(run_ids)).delete(synchronize_session=False)
+                s.query(CallLog).filter(CallLog.run_id.in_(run_ids)).delete(synchronize_session=False)
+                from app.db.models import RunAttempt
+
+                s.query(RunAttempt).filter(RunAttempt.run_id.in_(run_ids)).delete(synchronize_session=False)
+                s.query(Run).filter(Run.id.in_(run_ids)).delete(synchronize_session=False)
+            s.delete(cfg)
+            BATCHES.pop(cfg.id, None)
+            n += 1
+        s.query(RoleApproval).filter(RoleApproval.approved_at < cutoff).delete(synchronize_session=False)
+        s.commit()
+    return n
+
+
+def start_janitor(hours: int, every_seconds: int = 3600) -> None:
+    import time
+
+    def loop() -> None:
+        while True:
+            try:
+                purge_old(hours)
+            except Exception:  # never let cleanup take the app down
+                pass
+            time.sleep(every_seconds)
+
+    threading.Thread(target=loop, daemon=True).start()

@@ -10,16 +10,25 @@ export type ArmReport = { n_runs: number; status_counts: Record<string, number>;
 export type Status = { provider_errors?: string[]; state: string; total: number; done: number; status_counts: Record<string, number>; report: Record<string, ArmReport> }
 export type Results = { config: { id: number; project_id: string; model: string; provider: string; template_version: string; reps: number; arms: string[] }; runs: RunRow[]; report: Record<string, ArmReport>; project: Demo }
 
+/** Per-browser capability token: only this browser can read the runs it started. Kept in localStorage when available. */
+let memSid = ''
+export function getSid(): string {
+  try { let s = localStorage.getItem('saqca.sid'); if (!s) { s = crypto.randomUUID().replace(/-/g, '') + 'x'; localStorage.setItem('saqca.sid', s) } return s } catch { if (!memSid) memSid = crypto.randomUUID().replace(/-/g, '') + 'x'; return memSid }
+}
+export const withSid = (url: string) => url + (url.includes('?') ? '&' : '?') + 'sid=' + getSid()
+
 async function j<T>(path: string, body?: unknown, headers: Record<string, string> = {}): Promise<T> {
+  headers = { 'X-Session': getSid(), ...headers }
   const r = await fetch(path, body === undefined ? { headers } : { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) })
   if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText)
   return r.json()
 }
 export const api = {
   project: (pid: string) => j<Demo>(`/api/projects/${pid}`),
+  mode: () => j<{ mode: 'demo' | 'full'; max_reps: number; max_roles: number; retention_hours: number }>('/api/mode'),
   upload: async (file: File) => {
     const fd = new FormData(); fd.append('file', file)
-    const r = await fetch('/api/projects/upload', { method: 'POST', body: fd })
+    const r = await fetch('/api/projects/upload', { method: 'POST', body: fd, headers: { 'X-Session': getSid() } })
     if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText)
     return r.json() as Promise<UploadInfo>
   },

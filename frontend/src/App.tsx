@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { api, type Demo, type Results, type Role, type RunReq, type Status } from './api'
+import { api, withSid, type Demo, type Results, type Role, type RunReq, type Status } from './api'
 import { Dashboard } from './Dashboard'
 import { Hist } from './Hist'
 import { Intro } from './Intro'
@@ -30,6 +30,9 @@ export default function App() {
   const [design, setDesign] = usePersisted<RunReq>('design', { project_id: 'demo', role_set_hash: '', arms: { roles: [], generic: true, mechanical: true }, reps: 3, provider: 'demo-mock', model: 'demo-mock-1', temperature: null, tolerance: 0, spend_cap: null, price_in: null, price_out: null })
   const [apiKey, setApiKey] = useState('') // memory only; never persisted
   const [workspaceId, setWorkspaceId] = useState('')
+  const [mode, setMode] = useState<Awaited<ReturnType<typeof api.mode>> | null>(null)
+  useEffect(() => { api.mode().then(setMode).catch(() => undefined) }, [])
+  const demoOnly = mode?.mode === 'demo'
   const [runId, setRunId] = usePersisted<number | null>('runId', null)
   const [status, setStatus] = useState<Status | null>(null)
   const [results, setResults] = useState<Results | null>(null)
@@ -49,7 +52,7 @@ export default function App() {
 
   return (
     <>
-      <div className="banner" role="note">SA-QCA is a <b>candidate protocol for discussion</b>, not a finished standard. {demo?.is_demo && 'The demo data are synthetic. '}
+      <div className="banner" role="note">SA-QCA is a <b>candidate protocol for discussion</b>, not a finished standard. {demoOnly ? `Public demo: scripted responses only (no language model is called), synthetic data, nothing you type leaves this site, and runs are deleted after ${mode?.retention_hours} hours. To use your own data or a real model, run the tool locally. ` : demo?.is_demo && 'The demo data are synthetic. '}
         <button className="secondary" style={{ padding: '2px 10px' }} onClick={() => setShowIntro((v) => !v)} aria-expanded={showIntro}>About this tool</button>{' '}
         <label style={{ display: 'inline' }}><input type="checkbox" checked={expert} onChange={(e) => setExpert(e.target.checked)} /> Expert view (raw JSON)</label></div>
       <main>
@@ -60,9 +63,9 @@ export default function App() {
         </ol></nav>
         {err && <p role="alert" className="warn">{err}</p>}
         {!demo ? <p>Loading…</p> : <>
-          {step === 0 && <Step1 demo={demo} expert={expert} onProject={switchProject} />}
+          {step === 0 && <Step1 demo={demo} expert={expert} onProject={switchProject} demoOnly={demoOnly} />}
           {step === 1 && <Step2 roles={roles} setRoles={setRoles} approval={approval} approved={approved} onApprove={async (by) => { try { const a = await api.approve(roles, by); setApproval({ ...a, snapshot }); setDesign((d) => ({ ...d, role_set_hash: a.roles_hash, arms: { ...d.arms, roles: roles.map((r) => r.name) } })); setErr('') } catch (e) { setErr(String(e).replace(/^Error: /, '')) } }} />}
-          {step === 2 && <Step3 demo={demo} design={design} setDesign={setDesign} roles={roles} approved={approved} apiKey={apiKey} setApiKey={setApiKey} workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} expert={expert}
+          {step === 2 && <Step3 demoOnly={demoOnly} maxReps={mode?.max_reps ?? 1000} demo={demo} design={design} setDesign={setDesign} roles={roles} approved={approved} apiKey={apiKey} setApiKey={setApiKey} workspaceId={workspaceId} setWorkspaceId={setWorkspaceId} expert={expert}
             onStart={async () => { try { const r = await api.start({ ...design, project_id: demo.id, role_set_hash: approval?.roles_hash ?? '' }, apiKey, workspaceId); setRunId(r.run_config_id); setStatus(null); setResults(null); setStep(3); setErr('') } catch (e) { setErr(String(e).replace(/^Error: /, '')) } }} />}
           {step === 3 && <Step4 runId={runId} status={status} setStatus={setStatus} onDone={async (id) => { setResults(await api.results(id)) }} goResults={() => setStep(4)} />}
           {step === 4 && <Step5 results={results} demo={results?.project ?? demo} expert={expert} />}
@@ -72,7 +75,7 @@ export default function App() {
   )
 }
 
-function Step1({ demo, expert, onProject }: { demo: Demo; expert: boolean; onProject: (p: Demo) => void }) {
+function Step1({ demo, expert, onProject, demoOnly }: { demo: Demo; expert: boolean; onProject: (p: Demo) => void; demoOnly: boolean }) {
   const [mode, setMode] = useState<'current' | 'upload' | 'edit'>('current')
   const [existing, setExisting] = useState<Awaited<ReturnType<typeof api.setup>> | null>(null)
   return (<section aria-labelledby="s1">
@@ -80,7 +83,7 @@ function Step1({ demo, expert, onProject }: { demo: Demo; expert: boolean; onPro
     <p className="muted">Describe the phenomenon and define your conditions and outcome. This is what every agent will read.</p>
     <div className="actions" style={{ justifyContent: 'flex-start' }}>
       <button className={mode === 'current' ? '' : 'secondary'} onClick={() => setMode('current')}>Current project</button>
-      <button className={mode === 'upload' ? '' : 'secondary'} onClick={() => setMode('upload')}>Upload my own data</button>
+      {!demoOnly && <button className={mode === 'upload' ? '' : 'secondary'} onClick={() => setMode('upload')}>Upload my own data</button>}
       {!demo.is_demo && <button className="secondary" onClick={async () => { setExisting(await api.setup(demo.id)); setMode('edit') }}>Edit project</button>}
       {!demo.is_demo && <button className="secondary" onClick={async () => onProject(await api.project('demo'))}>Switch to the demo project</button>}
     </div>
@@ -132,7 +135,7 @@ function Step2({ roles, setRoles, approval, approved, onApprove }: { roles: Role
   </section>)
 }
 
-function Step3({ demo, design, setDesign, roles, approved, apiKey, setApiKey, workspaceId, setWorkspaceId, onStart, expert }: { workspaceId: string; setWorkspaceId: (v: string) => void; demo: Demo; design: RunReq; setDesign: (d: RunReq) => void; roles: Role[]; approved: boolean; apiKey: string; setApiKey: (k: string) => void; onStart: () => void; expert: boolean }) {
+function Step3({ demoOnly, maxReps, demo, design, setDesign, roles, approved, apiKey, setApiKey, workspaceId, setWorkspaceId, onStart, expert }: { demoOnly: boolean; maxReps: number; workspaceId: string; setWorkspaceId: (v: string) => void; demo: Demo; design: RunReq; setDesign: (d: RunReq) => void; roles: Role[]; approved: boolean; apiKey: string; setApiKey: (k: string) => void; onStart: () => void; expert: boolean }) {
   const [preview, setPreview] = useState<{ prompt: string; sent_to_provider: string; template_version: string } | null>(null)
   const [pv, setPv] = useState('__generic__')
   const [est, setEst] = useState<Awaited<ReturnType<typeof api.estimate>> | null>(null)
@@ -150,16 +153,16 @@ function Step3({ demo, design, setDesign, roles, approved, apiKey, setApiKey, wo
       <label><input type="checkbox" checked={design.arms.generic} onChange={(e) => up({ arms: { ...design.arms, generic: e.target.checked } })} /> Generic (same prompt, no role)</label>
       <label><input type="checkbox" disabled={!demo.has_reference} checked={design.arms.mechanical && demo.has_reference} onChange={(e) => up({ arms: { ...design.arms, mechanical: e.target.checked } })} /> Mechanical (Skaaning-style perturbation of the analyst's anchors; no LLM){!demo.has_reference && <span className="warn"> needs the analyst's original anchors and cutoffs (step 1)</span>}</label></div>
     <div className="card"><h3>Model and sampling</h3><div className="row">
-      <label>Provider<select value={design.provider} onChange={(e) => up({ provider: e.target.value, model: e.target.value === 'anthropic' ? 'claude-opus-5-5' : 'demo-mock-1' })}><option value="demo-mock">Scripted test responses (no key; not real LLM output)</option><option value="anthropic">Anthropic</option></select></label>
+      <label>Provider<select value={design.provider} onChange={(e) => up({ provider: e.target.value, model: e.target.value === 'anthropic' ? 'claude-opus-5-5' : 'demo-mock-1' })}><option value="demo-mock">Scripted test responses (no key; not real LLM output)</option>{!demoOnly && <option value="anthropic">Anthropic</option>}</select></label>
       <label>Model<input value={design.model} onChange={(e) => up({ model: e.target.value })} /></label>
-      <label>Repetitions per source<input type="number" min={1} value={design.reps} onChange={(e) => up({ reps: Math.max(1, +e.target.value) })} /></label>
+      <label>Repetitions per source<input type="number" min={1} max={maxReps} value={design.reps} onChange={(e) => up({ reps: Math.min(maxReps, Math.max(1, +e.target.value)) })} /></label>
       <label>Temperature (blank = provider default)<input type="number" step="0.1" value={design.temperature ?? ''} onChange={(e) => up({ temperature: e.target.value === '' ? null : +e.target.value })} /></label>
       <label>Range tolerance (fraction of observed range)<input type="number" step="0.05" min={0} value={design.tolerance} onChange={(e) => up({ tolerance: +e.target.value })} /></label></div>
       {anthropic && <label>API key (kept in this tab's memory only; sent per request)<input type="password" autoComplete="off" value={apiKey} onChange={(e) => setApiKey(e.target.value)} /></label>}
       {anthropic && <label>Workspace ID (only if the provider says your key is not scoped to a workspace)<input autoComplete="off" value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)} placeholder="wrkspc_…" /></label>}
-      <div className="row"><label>Price in ($/M tokens)<input type="number" value={design.price_in ?? ''} onChange={(e) => up({ price_in: e.target.value === '' ? null : +e.target.value })} /></label>
+      {!demoOnly && <div className="row"><label>Price in ($/M tokens)<input type="number" value={design.price_in ?? ''} onChange={(e) => up({ price_in: e.target.value === '' ? null : +e.target.value })} /></label>
         <label>Price out ($/M tokens)<input type="number" value={design.price_out ?? ''} onChange={(e) => up({ price_out: e.target.value === '' ? null : +e.target.value })} /></label>
-        <label>Spend cap ($, needs prices)<input type="number" value={design.spend_cap ?? ''} onChange={(e) => up({ spend_cap: e.target.value === '' ? null : +e.target.value })} /></label></div></div>
+        <label>Spend cap ($, needs prices)<input type="number" value={design.spend_cap ?? ''} onChange={(e) => up({ spend_cap: e.target.value === '' ? null : +e.target.value })} /></label></div>}</div>
     <div className="card"><h3>Exact prompt an agent will receive</h3>
       <label>Preview for<select value={pv} onChange={(e) => setPv(e.target.value)}><option value="__generic__">Generic (no role)</option>{roles.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}</select></label>
       {preview && <><p className="muted">Template {preview.template_version}. Sent to provider: {preview.sent_to_provider}.</p><pre tabIndex={0}>{preview.prompt}</pre></>}</div>
@@ -176,7 +179,7 @@ function Step4({ runId, status, setStatus, onDone, goResults }: { runId: number 
   const called = useRef<number | null>(null)
   useEffect(() => {
     if (runId === null) return
-    const es = new EventSource(`/api/runs/${runId}/events`)
+    const es = new EventSource(withSid(`/api/runs/${runId}/events`))
     es.onmessage = (m) => { const s: Status = JSON.parse(m.data); setStatus(s); if (s.state !== 'running') { es.close(); if (called.current !== runId) { called.current = runId; void onDone(runId) } } }
     es.onerror = () => es.close()
     return () => es.close()
