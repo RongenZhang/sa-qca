@@ -15,7 +15,14 @@ from pydantic import BaseModel
 from app import config
 from app.api import service
 from app.demo import SUGGESTED_ROLES
-from app.domain.prompt import RoleSpec, case_description_warnings, load_default_template, prompt_warnings, render_prompt
+from app.domain.prompt import (
+    DEFAULT_TEMPLATE_VERSION,
+    RoleSpec,
+    case_description_warnings,
+    load_default_template,
+    prompt_warnings,
+    render_prompt,
+)
 from app.domain.schema import build_decision_schema
 from app.projects import ProjectError, configure, create_upload, get_project, get_setup, project_summary
 
@@ -181,7 +188,7 @@ def preview(body: PreviewIn) -> dict[str, Any]:
     d = _project(body.project_id)
     role = RoleSpec(body.role.name, body.role.description) if body.role else None
     prompt = render_prompt(load_default_template(), d["variables"], d["project"]["case_description"], role)
-    return {"prompt": prompt, "template_version": "default_v1",
+    return {"prompt": prompt, "template_version": DEFAULT_TEMPLATE_VERSION,
             "warnings": [*prompt_warnings(d["variables"]), *case_description_warnings(d["project"]["case_description"])],
             "sent_to_provider": "summary statistics and histogram bins only; no raw rows",
             "json_schema": build_decision_schema([v.name for v in d["variables"] if v.role == "condition"])}

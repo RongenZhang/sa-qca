@@ -4,7 +4,7 @@
 |---|---|
 | 1. Roles derived from the phenomenon, approved before running | `RunConfig.roles`; approval UI arrives in phase 3 |
 | 2. Judgment separate from computation | `rservice/R/pipeline.R` is pure; `backend/app/engine/rinput.py` copies values through untouched |
-| 3. Agents get understanding, not just a distribution | `backend/app/domain/templates/default_v1.j2`; `prompt_warnings()` flags empty definitions/instruments |
+| 3. Agents get understanding, not just a distribution | `backend/app/domain/templates/default_v2.j2`; `prompt_warnings()` flags empty definitions/instruments |
 | 4. Generic and mechanical baselines | generic: `render_prompt(role=None)`; mechanical: `app/domain/mechanical.py` |
 | 5. Structural validation only | `app/domain/validator.py`: rejects, never repairs |
 

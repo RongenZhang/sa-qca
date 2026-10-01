@@ -50,7 +50,7 @@ The QCA computation is reproduced exactly. Model answers are not regenerated: th
 - The Anthropic adapter is covered by mocked tests and has had only a first real-API attempt; expect rough edges. OpenAI and OpenAI-compatible providers are not implemented yet.
 - "Suggest roles" returns scripted examples, not LLM suggestions.
 - The mechanical source follows Skaaning (2011) as read from the paper (lower/original/higher anchor sets crossed across conditions, outcome unchanged, frequency and consistency cutoffs varied); the offset size is this tool's choice, and the grid grows as 3^k with k conditions.
-- Only the `default_v1` prompt template is available; there is no template editor yet.
+- Only the `default_v2` prompt template is available (v1 is kept so earlier runs stay reproducible); there is no template editor yet.
 - A `docker-compose.yml` exists but has never been run. The app has no authentication and is meant to run locally for one researcher; do not expose it to the internet.
 - PDF export is via the browser's print dialog. Accessibility has had only basic attention (keyboard use, a colour-blind-safe palette).
 - Similarity scores compare solution terms; see [docs/similarity-metrics.md](docs/similarity-metrics.md) for definitions and caveats.

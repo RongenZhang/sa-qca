@@ -64,6 +64,5 @@
       "frequency_threshold": 1,
       "pri_threshold": 0.5
     }
-  },
-  "demo_note": "Synthetic data, built so that there are two routes to high adoption: trust together with management support, or ample resources in firms with low trust. This note is for you as a demo user only. It is never sent to a model, because a real study cannot know its routes in advance."
+  }
 }

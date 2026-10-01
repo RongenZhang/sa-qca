@@ -128,4 +128,43 @@ def test_demo_prompt_does_not_leak_the_built_in_routes():
     prompt = render_prompt(load_default_template(), d["variables"], d["project"]["case_description"], RoleSpec("R", "d"))
     for leak in ("by construction", "two routes", "route", "low trust", "Synthetic", "synthetic"):
         assert leak not in prompt, leak
-    assert len(d["project"]["case_description"]) > 600 and d["project"]["demo_note"]
+    assert len(d["project"]["case_description"]) > 600 
+
+
+def test_prompt_uses_configurational_language_and_asks_for_substantive_rationales():
+    p = render_prompt(load_default_template(), make_vars(), "cases", RoleSpec("Clerk", "Front-line view"))
+    assert "## Conditions and outcome" in p and "## Variables" not in p
+    assert "### A: a condition" in p and "### Y: the outcome" in p
+    assert "each condition and the outcome is a set" in p
+    assert "LESS membership in this set" in p  # B is negatively oriented in make_vars
+    assert "substantive reasoning" in p and "not acceptable" in p
+    assert "variable" not in p.replace("variables", "").lower().replace("a variable", "")  # no 'variable' vocabulary
+
+
+def test_v1_template_still_loads_for_earlier_runs():
+    from app.domain.prompt import load_template
+
+    assert "## Variables" in load_template("default_v1")
+    import pytest
+
+    with pytest.raises(ValueError):
+        load_template("../secrets")
+
+
+def test_scripted_rationales_are_substantive_and_use_the_conditions_own_words():
+    import json
+
+    from app.demo import DemoProvider
+
+    p = DemoProvider()
+    d = p.demo
+    prompt = render_prompt(load_default_template(), d["variables"], d["project"]["case_description"], RoleSpec("Independent IT consultant", "Advises firms."))
+    dec = json.loads(p.complete(prompt, model="m", sampling={}).text)
+    for name, block in dec["conditions"].items():
+        for k, text in block["rationale"].items():
+            assert len(text.split()) > 60, (name, k)
+            assert "empirical check" in text
+    trust = dec["conditions"]["TRUST"]["rationale"]["crossover"]
+    assert "managerial trust in the technology vendor" in trust and "7-point Likert" in trust
+    tt = dec["truth_table"]
+    assert "60 cases and 3 conditions" in tt["frequency_rationale"] and len(tt["consistency_rationale"].split()) > 40

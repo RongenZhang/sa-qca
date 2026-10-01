@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.db.models import CallLog, Judgment, RResult, Run, RunConfig
-from app.domain.prompt import load_default_template, prompt_hash
+from app.domain.prompt import load_template, prompt_hash
 from app.engine.report import validation_report
 
 FORMAT_VERSION = 1
@@ -85,7 +85,7 @@ def build_files(session: Session, cfg_id: int) -> dict[str, bytes]:
         snap = {**project_summary(get_project(session, cfg.project_id)), "reconstructed_from_current_project": True}
     files["project/project.json"] = _j(snap)
     files["roles/approved_roles.json"] = _j({"approval": cfg.role_approval, "roles_used": cfg.roles})
-    template = load_default_template()
+    template = load_template(cfg.template_version)  # the exact template this run used
     files[f"prompts/template_{cfg.template_version}.j2"] = template.encode()
     template_ok = prompt_hash(template) == cfg.template_sha256
 
