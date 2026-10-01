@@ -316,26 +316,42 @@ def bundle(cfg_id: int = Depends(owned_run)) -> Response:
 
 
 _verify_lock = threading.Lock()
+_verify_jobs: dict[int, dict[str, Any]] = {}
 
 
-@app.post("/api/runs/{cfg_id}/verify")
+@app.post("/api/runs/{cfg_id}/verify", status_code=202)
 def verify(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
-    """Builds the bundle for this run and re-runs its replication script."""
+    """Starts a background job: build the bundle for this run and re-run its replication script (can take minutes)."""
     from app.exports.bundle import BundleError, build_zip
     from app.exports.verify import verify_bundle
 
+    if _verify_jobs.get(cfg_id, {}).get("state") == "running":
+        return {"state": "running"}
     # Verification starts another R process; on the memory-limited public demo only one may run at a time.
     if config.demo_only() and not _verify_lock.acquire(blocking=False):
         raise HTTPException(429, "another verification is in progress; please try again in a minute")
-    try:
-        with service.session() as s:
-            data = build_zip(s, cfg_id)
-        return verify_bundle(data)
-    except BundleError as e:
-        raise HTTPException(400, str(e)) from e
-    finally:
-        if config.demo_only() and _verify_lock.locked():
-            _verify_lock.release()
+    _verify_jobs[cfg_id] = {"state": "running"}
+
+    def work() -> None:
+        try:
+            with service.session() as s:
+                data = build_zip(s, cfg_id)
+            _verify_jobs[cfg_id] = {"state": "done", "result": verify_bundle(data)}
+        except BundleError as e:
+            _verify_jobs[cfg_id] = {"state": "done", "result": {"ok": False, "error": str(e)}}
+        except Exception as e:  # report instead of leaving the page waiting forever
+            _verify_jobs[cfg_id] = {"state": "done", "result": {"ok": False, "error": f"verification failed: {e}"}}
+        finally:
+            if config.demo_only() and _verify_lock.locked():
+                _verify_lock.release()
+
+    threading.Thread(target=work, daemon=True).start()
+    return {"state": "running"}
+
+
+@app.get("/api/runs/{cfg_id}/verify")
+def verify_status(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
+    return _verify_jobs.get(cfg_id, {"state": "none"})
 
 
 @app.get("/api/runs/{cfg_id}/report", response_class=HTMLResponse)
@@ -359,6 +375,8 @@ def mode() -> dict[str, Any]:
 def _startup() -> None:
     if config.demo_only():
         service.start_janitor(config.retention_hours())
+    if os.environ.get("SA_QCA_R_WORKER", "1") != "0" and not os.environ.get("RSERVICE_URL"):
+        threading.Thread(target=lambda: service.r_worker().warm(), daemon=True).start()  # hide R's start-up time
 
 
 # Single-container deployment: serve the built frontend from the same origin (mounted last so /api wins).

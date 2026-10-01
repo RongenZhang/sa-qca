@@ -27,5 +27,11 @@ echo "other visitor cannot read it"
 code=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Session: someoneelse0000000000" "$BASE/api/runs/$ID/results")
 [ "$code" = "404" ] || { echo "expected 404, got $code"; exit 1; }
 echo "bundle verifies (real R, no LLM)"
-curl -fsS -X POST "${H[@]}" "$BASE/api/runs/$ID/verify" | grep -q '"ok": *true'
+curl -fsS -X POST "${H[@]}" "$BASE/api/runs/$ID/verify" >/dev/null
+for i in $(seq 1 90); do
+  V=$(curl -fsS "${H[@]}" "$BASE/api/runs/$ID/verify")
+  echo "$V" | grep -q '"state": *"done"' && break
+  sleep 3
+done
+echo "$V" | grep -q '"ok": *true' || { echo "verification failed: $V"; exit 1; }
 echo "SMOKE TEST PASSED"
