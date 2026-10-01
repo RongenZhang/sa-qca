@@ -55,6 +55,10 @@ The QCA computation is reproduced exactly. Model answers are not regenerated: th
 - PDF export is via the browser's print dialog. Accessibility has had only basic attention (keyboard use, a colour-blind-safe palette).
 - Similarity scores compare solution terms; see [docs/similarity-metrics.md](docs/similarity-metrics.md) for definitions and caveats.
 
+## Public demo
+
+A scripted, no-key version of the tool can be deployed free on Hugging Face Spaces; see [docs/deploy.md](docs/deploy.md). It refuses uploads and real model providers, isolates visitors, and deletes runs after 24 hours.
+
 ## Documentation
 
 [docs/protocol-to-code.md](docs/protocol-to-code.md) maps each protocol step to the code; [docs/similarity-metrics.md](docs/similarity-metrics.md) documents the metrics.

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { getSid, withSid } from './api'
 import { api2, type Attempt, type Dashboard as D, type Demo, type Rationale, type Results } from './api'
 import { AnchorStrip, armColors, RobustnessHeat, SimilarityBox } from './charts'
 import { ChartFrame } from './export'
@@ -8,13 +9,13 @@ const TABS = ['Solutions', 'Robustness', 'Similarity', 'Anchors', 'Rationales', 
 type Tab = (typeof TABS)[number]
 function ExportCard({ id }: { id: number }) {
   const [v, setV] = useState<Record<string, unknown> | 'busy' | null>(null)
-  const verify = async () => { setV('busy'); try { const r = await fetch(`/api/runs/${id}/verify`, { method: 'POST' }); setV(await r.json()) } catch (e) { setV({ ok: false, error: String(e) }) } }
+  const verify = async () => { setV('busy'); try { const r = await fetch(`/api/runs/${id}/verify`, { method: 'POST', headers: { 'X-Session': getSid() } }); setV(await r.json()) } catch (e) { setV({ ok: false, error: String(e) }) } }
   const r = typeof v === 'object' && v ? v : null
   return (<div className="card"><h3>Export and verify</h3>
     <p className="muted">The bundle contains the data, prompts, raw responses, decisions, R code and checksums, and no API keys. The report is HTML: use your browser's Print to save a PDF.</p>
     <div className="actions" style={{ justifyContent: 'flex-start' }}>
-      <a href={`/api/runs/${id}/bundle`}><button>Download replication bundle (ZIP)</button></a>
-      <a href={`/api/runs/${id}/report`} target="_blank" rel="noreferrer"><button className="secondary">Open report (HTML)</button></a>
+      <a href={withSid(`/api/runs/${id}/bundle`)}><button>Download replication bundle (ZIP)</button></a>
+      <a href={withSid(`/api/runs/${id}/report`)} target="_blank" rel="noreferrer"><button className="secondary">Open report (HTML)</button></a>
       <button className="secondary" disabled={v === 'busy'} onClick={verify}>{v === 'busy' ? 'Re-running R…' : 'Verify bundle'}</button></div>
     {r && <p role="status" className={r.ok ? 'ok' : 'warn'}>{r.ok ? `Verified: ${r.n_match} of ${r.n_runs} runs reproduced exactly; ${r.n_files} files match the manifest.` : `Not verified: ${String(r.error ?? '')} ${r.n_mismatch ? `${r.n_mismatch} run(s) differ.` : ''}`}</p>}
   </div>)

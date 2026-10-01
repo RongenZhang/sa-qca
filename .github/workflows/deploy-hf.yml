@@ -1,0 +1,45 @@
+name: Deploy public demo to Hugging Face Spaces
+# Runs only when the repository variable HF_SPACE (e.g. "yourname/sa-qca-demo") and the secret HF_TOKEN are set.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    if: ${{ vars.HF_SPACE != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assemble the Space
+        run: |
+          mkdir space
+          cp -r Dockerfile LICENSE backend frontend rservice demo space/
+          rm -rf space/backend/tests space/frontend/node_modules space/frontend/dist
+          mkdir -p space/rservice && rm -rf space/rservice/tests
+          cat > space/README.md <<'YAML'
+          ---
+          title: Stakeholder Anchors (SA-QCA)
+          emoji: 🧭
+          colorFrom: blue
+          colorTo: green
+          sdk: docker
+          app_port: 7860
+          pinned: false
+          license: mit
+          short_description: Stakeholder-based calibration sensitivity analysis for fsQCA (public demo)
+          ---
+
+          Public demo of SA-QCA with scripted responses and synthetic data. Source and full (local) version: https://github.com/RongenZhang/sa-qca
+          YAML
+      - name: Push to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          cd space
+          git init -q -b main
+          git config user.email "deploy@users.noreply.github.com"
+          git config user.name "deploy"
+          git add -A
+          git commit -qm "Deploy ${GITHUB_SHA::7}"
+          git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" main

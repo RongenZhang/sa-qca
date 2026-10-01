@@ -18,7 +18,7 @@ pytestmark = pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript
 @pytest.fixture(scope="module")
 def built(tmp_path_factory):
     service.init_db(f"sqlite:///{tmp_path_factory.mktemp('db')}/t.sqlite")
-    c = TestClient(app)
+    c = TestClient(app, headers={"X-Session": "test-visitor-0001"})
     ok = c.post("/api/roles/approve", json={"roles": [{"name": "Vendor account manager", "description": "sells"}], "approved_by": "t"}).json()
     rid = c.post("/api/runs", json={"role_set_hash": ok["roles_hash"], "reps": 3,
                                     "arms": {"roles": ["Vendor account manager"], "generic": True, "mechanical": False}}).json()["run_config_id"]

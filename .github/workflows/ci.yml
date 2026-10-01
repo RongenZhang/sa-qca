@@ -32,3 +32,14 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: "22" }
       - run: cd frontend && npm ci && npm run lint && npm run build
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the demo image
+        run: docker build -t sa-qca-demo .
+      - name: Run it and smoke-test
+        run: |
+          docker run -d --name sa -p 7860:7860 sa-qca-demo
+          for i in $(seq 1 30); do curl -fsS localhost:7860/health && break; sleep 2; done
+          bash deploy/smoke.sh http://localhost:7860 || { docker logs sa | tail -50; exit 1; }
