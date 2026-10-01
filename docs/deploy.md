@@ -1,8 +1,23 @@
 # Deploying the public demo (free tier)
 
-The public demo is a **scripted** version of the tool: demo project and scripted responses only, no uploads, no API keys, no language model calls. It runs as one Docker container (built frontend + backend + R with QCA). [Hugging Face Spaces](https://huggingface.co/spaces) (Docker SDK, free CPU) is the suggested host: it gives enough memory for R and does not require a card.
+The public demo is a **scripted** version of the tool: demo project and scripted responses only, no uploads, no API keys, no language model calls. It runs as one Docker container (built frontend + backend + R with QCA).
 
-## One-time setup (about 10 minutes, done by you)
+Two free-tier options are prepared. **Render** is the one to use if Hugging Face does not offer you free Docker/CPU Spaces (some accounts see Docker marked "Paid").
+
+## Option A: Render (free web service)
+
+Measured peak memory for one full demo run is about 230 MB (Python server 78 MB + R 151 MB), which fits Render's 512 MB free plan if only one run happens at a time; `render.yaml` sets that.
+
+1. Sign up at render.com (GitHub login is simplest).
+2. Dashboard › New + › **Blueprint** › pick the `sa-qca` repository (or paste its public URL) › **Apply**. Render reads `render.yaml` and builds the Dockerfile (first build takes several minutes).
+3. When it shows **Live**, open the `https://sa-qca-demo-xxxx.onrender.com` address it gives you.
+4. Check it: `bash deploy/smoke.sh https://sa-qca-demo-xxxx.onrender.com`
+
+It redeploys automatically on every push to `main`. Free services sleep after about 15 minutes idle and take about a minute to wake.
+
+## Option B: Hugging Face Spaces (Docker SDK, free CPU where available)
+
+Setup (about 10 minutes, done by you):
 
 1. Create a free account at huggingface.co.
 2. Create a **Space**: New Space › name it (for example `sa-qca-demo`) › SDK **Docker** › hardware **CPU basic (free)** › visibility **Public**.
@@ -28,7 +43,7 @@ bash deploy/smoke.sh https://<username>-<space-name>.hf.space
 
 ## Free-tier behaviour to expect
 
-The Space sleeps after inactivity and takes a minute to wake; the first run after a cold start is slower. The mechanical source makes about 30 separate R calls, so a full demo run takes around a minute.
+The site sleeps after inactivity and takes a minute to wake; the first run after a cold start is slower. The mechanical source makes about 30 separate R calls, so a full demo run takes around a minute.
 
 ## Not yet supported on the public site
 

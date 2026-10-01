@@ -109,3 +109,15 @@ def test_full_mode_is_unchanged(tmp_path, monkeypatch):
     c = TestClient(app)
     assert c.get("/api/mode").json()["mode"] == "full"
     assert c.post("/api/projects/upload", files={"file": ("a.csv", b"a,b\n1,2\n3,4\n")}, headers=A).status_code == 200
+
+
+def test_only_one_verification_at_a_time_on_the_demo(demo, monkeypatch):
+    import app.main as main
+
+    rid = demo.post("/api/runs", json=GEN, headers=A).json()["run_config_id"]
+    finish(demo, rid, A)
+    assert main._verify_lock.acquire(blocking=False)  # simulate a verification already in progress
+    try:
+        assert demo.post(f"/api/runs/{rid}/verify", headers=A).status_code == 429
+    finally:
+        main._verify_lock.release()
