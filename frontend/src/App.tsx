@@ -89,7 +89,6 @@ function Step1({ demo, expert, onProject, demoOnly }: { demo: Demo; expert: bool
     </div>
     {mode === 'upload' ? <Upload onReady={(p) => { onProject(p); setMode('current') }} /> : mode === 'edit' && existing ? <Upload key={demo.id} existing={{ info: existing.upload, config: existing.config }} onReady={(p) => { onProject(p); setMode('current') }} /> : <>
     <p>{demo.name} · {demo.n_cases} cases{demo.n_dropped > 0 && ` (${demo.n_dropped} rows dropped for missing values)`}. <span className="muted">{demo.case_description}</span></p>
-    {demo.demo_note && <p className="card muted" role="note"><b>Note for demo users (not sent to any model):</b> {demo.demo_note}</p>}
     {!demo.has_reference && <p className="muted" role="note">No complete set of original anchors and cutoffs was given, so the mechanical source and the comparison with your published solution are unavailable for this project.</p>}
     <p className="muted">Data minimization: agents receive only the definitions, instruments and the summary statistics/histograms below. Raw rows are never sent.</p>
     {demo.warnings.length > 0 && <p role="alert" className="warn">Warning: {demo.warnings.join('; ')}. Agents given little context tend to return a percentile rule.</p>}

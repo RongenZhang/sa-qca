@@ -18,7 +18,7 @@ from app import config, rclient
 from app.db.models import Base, CallLog, Judgment, RoleApproval, RResult, Run, RunConfig
 from app.demo import DemoProvider
 from app.domain.mechanical import MechanicalConfig, generate_skaaning_configs
-from app.domain.prompt import RoleSpec, load_default_template, prompt_hash
+from app.domain.prompt import DEFAULT_TEMPLATE_VERSION, RoleSpec, load_default_template, prompt_hash
 from app.engine.report import validation_report
 from app.engine.rinput import build_r_input
 from app.engine.runner import CostModel, EngineContext, run_batch
@@ -149,7 +149,7 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
     with session() as s:
         cfg = RunConfig(
             owner=sid, project_snapshot=snapshot, role_approval=approval,
-            project_id=req.get("project_id", "demo"), template_version="default_v1", template_sha256=prompt_hash(template), provider=provider.name,
+            project_id=req.get("project_id", "demo"), template_version=DEFAULT_TEMPLATE_VERSION, template_sha256=prompt_hash(template), provider=provider.name,
             model=req["model"], sampling=sampling, reps=int(req["reps"]), tolerance=float(req.get("tolerance", 0.0)),
             spend_cap=req.get("spend_cap"), roles=[r.__dict__ for r in roles],
             arms=[*(f"role:{r.name}" for r in roles), *(["generic"] if arms.get("generic") else []),

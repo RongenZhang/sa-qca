@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.demo_rationales import anchor_rationale, consistency_rationale, frequency_rationale, pri_rationale
 from app.domain.prompt import VariableSpec
 from app.domain.stats import describe
 from app.llm.base import LLMProvider, LLMResponse
@@ -58,6 +59,8 @@ class DemoProvider(LLMProvider):
     def complete(self, prompt: str, *, model: str, sampling: dict[str, Any]) -> LLMResponse:
         m = re.search(r"You are answering as: (.+)", prompt)
         role = m.group(1).strip() if m else "generic"
+        md = re.search(r"You are answering as: .+\n(.+?)\n(?:Calibrate|Set the calibration)", prompt, re.S)
+        role_desc = md.group(1).strip() if md else ""
         retry = "previous answer was rejected" in prompt
         if not retry:
             self.counts[role] = self.counts.get(role, 0) + 1
@@ -68,10 +71,10 @@ class DemoProvider(LLMProvider):
             bias = (int(hashlib.sha256(role.encode()).hexdigest(), 16) % 200 - 100) / 1000
         jitter = ((h % 1000) / 1000 - 0.5) * 0.06
         bad = (not retry and h % 6 == 0) or (retry and h % 20 == 0)
-        text = json.dumps(self._decision(bias + jitter, break_order=bad), indent=2)
+        text = json.dumps(self._decision(bias + jitter, bad, role, role_desc), indent=2, ensure_ascii=False)
         return LLMResponse(text=text, model_id="demo-mock-1", tokens_in=len(prompt) // 4, tokens_out=len(text) // 4)
 
-    def _decision(self, shift: float, break_order: bool) -> dict[str, Any]:
+    def _decision(self, shift: float, break_order: bool, role: str = "generic", role_desc: str = "") -> dict[str, Any]:
         d = self.demo
         stats = {v.name: v.stats for v in d["variables"]}
         first_cond = next(v.name for v in d["variables"] if v.role == "condition")
@@ -87,22 +90,21 @@ class DemoProvider(LLMProvider):
             a = {k: min(stats[n]["max"], max(stats[n]["min"], base[k] + shift * span)) for k in ANCHOR_KEYS}
             if break_order and n == first_cond:
                 a["full_membership"], a["full_non_membership"] = a["full_non_membership"], a["full_membership"]
-            why = {
-                "full_non_membership": "Below this the cases are clearly outside the set given how the construct is measured.",
-                "crossover": "This is where a reasonable observer in my position could not say in or out.",
-                "full_membership": "At or above this the construct is unambiguously present.",
-            }
+            var = next(v for v in d["variables"] if v.name == n)
+            why = {k: anchor_rationale(role, role_desc, var, k, round(a[k], 4), d["data"][n]) for k in ANCHOR_KEYS}
             return {"anchors": {k: round(a[k], 4) for k in ANCHOR_KEYS}, "rationale": why}
 
         tt = dict(d["reference_cutoffs"]) or {"consistency_threshold": 0.8, "frequency_threshold": 1, "pri_threshold": None}
+        n_cases = len(d["data"][d["outcome"]])
+        k = sum(1 for v in d["variables"] if v.role == "condition")
         return {
             "conditions": {v.name: block(v.name) for v in d["variables"] if v.role == "condition"},
             "outcome": block(d["outcome"]),
             "truth_table": {
                 "consistency_threshold": tt["consistency_threshold"], "frequency_threshold": tt["frequency_threshold"],
                 "pri_threshold": tt.get("pri_threshold"),
-                "consistency_rationale": "Keeps only rows that are clearly consistent with sufficiency.",
-                "frequency_rationale": "With this many cases a single case can carry a row.",
-                "pri_rationale": "Guards against rows that are simultaneously sufficient for the outcome and its negation.",
+                "consistency_rationale": consistency_rationale(role, tt["consistency_threshold"], n_cases, k),
+                "frequency_rationale": frequency_rationale(role, tt["frequency_threshold"], n_cases, k),
+                "pri_rationale": pri_rationale(tt["pri_threshold"]) if tt.get("pri_threshold") is not None else None,
             },
         }

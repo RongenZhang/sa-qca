@@ -133,7 +133,7 @@ def test_preview_uses_uploaded_project(client):
     pid = upload(client).json()["project_id"]
     client.post(f"/api/projects/{pid}/configure", json=cfg(case_description="UNIQUE CASE TEXT"))
     pr = client.post("/api/prompt/preview", json={"project_id": pid}).json()["prompt"]
-    assert "UNIQUE CASE TEXT" in pr and "TRUST" not in pr and "### B" in pr and "negative orientation" in pr
+    assert "UNIQUE CASE TEXT" in pr and "TRUST" not in pr and "### B: a condition" in pr and "### Y: the outcome" in pr and "LESS membership in this set" in pr and "MORE membership in this set" in pr
 
 
 @pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript not available")

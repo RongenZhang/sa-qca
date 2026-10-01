@@ -12,7 +12,7 @@ from jinja2 import Environment, StrictUndefined
 
 from app.domain.schema import build_decision_schema
 
-DEFAULT_TEMPLATE_VERSION = "default_v1"
+DEFAULT_TEMPLATE_VERSION = "default_v2"  # v1 is kept so earlier runs stay reproducible
 
 
 @dataclass(frozen=True)
@@ -32,8 +32,14 @@ class VariableSpec:
     stats: dict[str, Any]
 
 
+def load_template(version: str) -> str:
+    if not version.replace("_", "").isalnum():
+        raise ValueError(f"bad template version {version!r}")
+    return resources.files("app.domain").joinpath(f"templates/{version}.j2").read_text()
+
+
 def load_default_template() -> str:
-    return resources.files("app.domain").joinpath("templates/default_v1.j2").read_text()
+    return load_template(DEFAULT_TEMPLATE_VERSION)
 
 
 def prompt_warnings(variables: list[VariableSpec]) -> list[str]:
