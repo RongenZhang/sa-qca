@@ -157,7 +157,7 @@ def build_report(session: Session, cfg_id: int) -> str:
     h.append(_table(["Path", *[source_label(a) for a in d["arms"]], "Across roles"],
                     [[r["path"], *["–" if r["share_by_arm"][a] is None else f"{r['share_by_arm'][a] * 100:.0f}%" for a in d["arms"]], r["across_roles"]] for r in d["robustness"]])
              if d["robustness"] else "<p>No reference solution.</p>")
-    h.append("<h3>Similarity to the analyst's solution</h3><p>1 = same solution, 0 = nothing in common (Jaccard over solution terms). Circles group runs with the same score; the number is how many.</p>")
+    h.append("<h3>Similarity to the analyst's solution</h3><p>Similarity is scored from 0 to 1: 1 means a run found the same solution as the analyst's, and 0 means the two solutions share no terms (Jaccard similarity over solution terms). Each circle stands for all runs with the same score, and the number inside it shows how many runs that is.</p>")
     h.append(_sim_svg(d))
     h.append("<h2>5. Validation</h2>")
     h.append(_table(["Source", "Runs", "Invalid rate", "First-attempt failure", "Statuses", "Failure reasons"],
