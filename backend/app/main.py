@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -307,18 +308,27 @@ def bundle(cfg_id: int = Depends(owned_run)) -> Response:
                     headers={"Content-Disposition": f'attachment; filename="sa-qca-run{cfg_id}-replication.zip"'})
 
 
+_verify_lock = threading.Lock()
+
+
 @app.post("/api/runs/{cfg_id}/verify")
 def verify(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
     """Builds the bundle for this run and re-runs its replication script."""
     from app.exports.bundle import BundleError, build_zip
     from app.exports.verify import verify_bundle
 
+    # Verification starts another R process; on the memory-limited public demo only one may run at a time.
+    if config.demo_only() and not _verify_lock.acquire(blocking=False):
+        raise HTTPException(429, "another verification is in progress; please try again in a minute")
     try:
         with service.session() as s:
             data = build_zip(s, cfg_id)
+        return verify_bundle(data)
     except BundleError as e:
         raise HTTPException(400, str(e)) from e
-    return verify_bundle(data)
+    finally:
+        if config.demo_only() and _verify_lock.locked():
+            _verify_lock.release()
 
 
 @app.get("/api/runs/{cfg_id}/report", response_class=HTMLResponse)

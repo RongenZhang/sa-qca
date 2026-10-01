@@ -1,0 +1,17 @@
+# Render blueprint for the public demo (free plan). Memory on the free plan is 512 MB; the demo's peak is about
+# 230 MB for one run (measured), so only one run at a time is allowed.
+services:
+  - type: web
+    name: sa-qca-demo
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: SA_QCA_MODE
+        value: demo
+      - key: SA_QCA_MAX_CONCURRENT
+        value: "1"
+      - key: SA_QCA_MAX_REPS
+        value: "3"
