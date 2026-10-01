@@ -121,3 +121,17 @@ def test_only_one_verification_at_a_time_on_the_demo(demo, monkeypatch):
         assert demo.post(f"/api/runs/{rid}/verify", headers=A).status_code == 429
     finally:
         main._verify_lock.release()
+
+
+def test_verify_runs_in_the_background_and_is_private(demo):
+    rid = demo.post("/api/runs", json=GEN, headers=A).json()["run_config_id"]
+    finish(demo, rid, A)
+    assert demo.get(f"/api/runs/{rid}/verify", headers=A).json() == {"state": "none"}
+    assert demo.post(f"/api/runs/{rid}/verify", headers=A).status_code == 202
+    assert demo.get(f"/api/runs/{rid}/verify", headers=B).status_code == 404
+    for _ in range(100):
+        st = demo.get(f"/api/runs/{rid}/verify", headers=A).json()
+        if st["state"] == "done":
+            break
+        time.sleep(0.5)
+    assert st["state"] == "done" and "ok" in st["result"]

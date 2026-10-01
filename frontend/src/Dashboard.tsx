@@ -9,7 +9,20 @@ const TABS = ['Solutions', 'Robustness', 'Similarity', 'Anchors', 'Rationales', 
 type Tab = (typeof TABS)[number]
 function ExportCard({ id }: { id: number }) {
   const [v, setV] = useState<Record<string, unknown> | 'busy' | null>(null)
-  const verify = async () => { setV('busy'); try { const r = await fetch(`/api/runs/${id}/verify`, { method: 'POST', headers: { 'X-Session': getSid() } }); setV(await r.json()) } catch (e) { setV({ ok: false, error: String(e) }) } }
+  const verify = async () => {
+    setV('busy')
+    const h = { 'X-Session': getSid() }
+    try {
+      const r = await fetch(`/api/runs/${id}/verify`, { method: 'POST', headers: h })
+      if (!r.ok) { setV({ ok: false, error: (await r.json().catch(() => ({}))).detail ?? r.statusText }); return }
+      for (let i = 0; i < 300; i++) {  // the check re-runs R and can take minutes: poll
+        await new Promise((res) => setTimeout(res, 2000))
+        const st = await (await fetch(`/api/runs/${id}/verify`, { headers: h })).json()
+        if (st.state === 'done') { setV(st.result); return }
+      }
+      setV({ ok: false, error: 'verification is taking too long; try again later' })
+    } catch (e) { setV({ ok: false, error: String(e) }) }
+  }
   const r = typeof v === 'object' && v ? v : null
   return (<div className="card"><h3>Export and verify</h3>
     <p className="muted">The bundle contains the data, prompts, raw responses, decisions, R code and checksums, and no API keys. The report is HTML: use your browser's Print to save a PDF.</p>

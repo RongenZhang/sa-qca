@@ -53,10 +53,28 @@ def session() -> Session:
     return _SessionLocal()
 
 
+_worker: Any = None
+_worker_lock = threading.Lock()
+
+
+def r_worker() -> Any:
+    """The shared persistent R process (created on first use)."""
+    global _worker
+    with _worker_lock:
+        if _worker is None:
+            from app.rworker import RWorker
+
+            _worker = RWorker(str(REPO_ROOT / "rservice"))
+        return _worker
+
+
 def r_pipeline(payload: dict[str, Any]) -> dict[str, Any]:
     if os.environ.get("RSERVICE_URL"):
         return rclient.run_pipeline(payload)
-    return rclient.run_pipeline_local(payload, str(REPO_ROOT / "rservice"))
+    if os.environ.get("SA_QCA_R_WORKER", "1") == "0":
+        return rclient.run_pipeline_local(payload, str(REPO_ROOT / "rservice"))  # one R process per call
+    out: dict[str, Any] = r_worker().run(payload)
+    return out
 
 
 def roles_hash(roles: list[dict[str, Any]]) -> str:
