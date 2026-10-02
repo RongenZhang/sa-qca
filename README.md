@@ -18,6 +18,8 @@ Design rules: only an agent, the mechanical generator or the analyst ever suppli
 
 ## Quickstart (no API key needed)
 
+Once the requirements below are installed, `scripts/start-local.sh` checks them, starts the backend and frontend together and prints the address (Ctrl+C stops both; `--check` only checks). The manual steps follow.
+
 Requirements: R 4.5+ with the packages `QCA`, `SetMethods`, `jsonlite`, `plumber`, `testthat`; Python 3.11+; Node 22+.
 
 ```bash
@@ -61,7 +63,7 @@ A scripted, no-key version of the tool can be deployed free on Hugging Face Spac
 
 ## Documentation
 
-[docs/protocol-to-code.md](docs/protocol-to-code.md) maps each protocol step to the code; [docs/similarity-metrics.md](docs/similarity-metrics.md) documents the metrics.
+[docs/demo-script.md](docs/demo-script.md) is a 10-minute speaker script for a live demo; [docs/protocol-to-code.md](docs/protocol-to-code.md) maps each protocol step to the code; [docs/similarity-metrics.md](docs/similarity-metrics.md) documents the metrics.
 
 ## Citing
 

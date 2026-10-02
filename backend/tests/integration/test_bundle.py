@@ -120,6 +120,7 @@ def test_report_contents_and_ai_statement(built):
     for must in ("candidate protocol for discussion", "Anchor sources", "demo-mock-1", "AI-use statement", "Vendor account manager",
                  "never edited", "exactly one further attempt", "Analyst's original", "Invalid rate", "<svg"):
         assert must in t, must
+    assert "Each circle stands for all runs with the same score" in t and "1 means a run found the same solution" in t
     assert "TRUST" in t and "Managerial trust" in t
     assert re.search(r"\d+ of \d+ agent runs", t)
     assert c.get("/api/runs/99999/report").status_code == 404
