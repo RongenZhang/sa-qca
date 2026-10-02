@@ -90,3 +90,73 @@ test_that("demo dataset recovers its two built-in routes (equifinality) under th
     expect_setequal(terms, c("TRUST*SUPPORT", "~TRUST*RESOURCES"))
   }
 })
+
+
+# ---- calibration kinds -------------------------------------------------------------------------------------
+
+isj_input <- function(breaks = list(break_0 = 0, break_33 = 15, break_67 = 90)) {
+  d <- read.csv(file.path(root, "rservice", "tests", "testthat", "fixtures", "zhang_ramesh_2024_isj.csv"), stringsAsFactors = FALSE)
+  conds <- c("ACC", "VISI", "AUTO", "INCEN1", "INCEN2")
+  list(data = c(as.list(d[, conds]), list(Posts = d$Posts)),
+       conditions = lapply(conds, function(n) list(name = n, direction = "positive", dir_exp = NULL,
+                                                   calibration = list(kind = "precalibrated"))),
+       outcome = list(name = "Posts", direction = "positive", calibration = list(kind = "breakpoints", breakpoints = breaks)),
+       truth_table = list(consistency_threshold = 0.8, frequency_threshold = 1, pri_threshold = 0.75))
+}
+
+test_that("breakpoints: positive orientation, boundary values take the lower score", {
+  b <- list(break_0 = 0, break_33 = 15, break_67 = 90)
+  expect_equal(calibrate_breakpoints(c(0, 1, 15, 16, 90, 91), b), c(0, 0.33, 0.33, 0.67, 0.67, 1))
+})
+
+test_that("breakpoints: negative orientation mirrors the comparisons", {
+  b <- list(break_0 = 100, break_33 = 50, break_67 = 10)
+  expect_equal(calibrate_breakpoints(c(120, 100, 99, 50, 49, 10, 9), b), c(0, 0, 0.33, 0.33, 0.67, 0.67, 1))
+})
+
+test_that("breakpoints must be finite and strictly ordered", {
+  expect_error(calibrate_breakpoints(1:3, list(break_0 = 0, break_33 = 5, break_67 = 5)), "strictly")
+  expect_error(calibrate_breakpoints(1:3, list(break_0 = 0, break_33 = 9, break_67 = 5)), "strictly")
+  expect_error(calibrate_breakpoints(1:3, list(break_0 = NA, break_33 = 5, break_67 = 9)), "finite")
+})
+
+test_that("pass-through keeps memberships exactly and refuses anything outside [0, 1]", {
+  x <- c(0, 0.33, 0.67, 1, 0.123456789012345)
+  expect_identical(passthrough_variable(x, "A"), x)
+  expect_error(passthrough_variable(c(0.5, 1.2), "A"), "memberships in \\[0, 1\\]")
+  expect_error(passthrough_variable(c(0.5, NA), "A"), "memberships in \\[0, 1\\]")
+})
+
+test_that("inputs without a calibration field behave exactly as direct calibration (older runs still replicate)", {
+  old <- demo_input()
+  new <- old
+  new$conditions <- lapply(old$conditions, function(v) { v$calibration <- list(kind = "direct", anchors = v$anchors); v$anchors <- NULL; v })
+  new$outcome$calibration <- list(kind = "direct", anchors = old$outcome$anchors); new$outcome$anchors <- NULL
+  expect_identical(canonical_json(run_pipeline(old)), canonical_json(run_pipeline(new)))
+})
+
+test_that("unknown calibration kinds and incomplete breakpoints are errors, not guesses", {
+  bad <- isj_input(); bad$outcome$calibration$kind <- "magic"
+  expect_match(run_pipeline(bad)$error, "unknown calibration kind")
+  bad <- isj_input(list(break_0 = 0, break_33 = 15)); expect_match(run_pipeline(bad)$error, "breakpoints incomplete")
+})
+
+test_that("KNOWN ANSWER (Zhang & Ramesh 2024, ISJ): breakpoints 0/15/90 reproduce the published outcome and solution", {
+  r <- run_pipeline(isj_input())
+  expect_identical(r$status, "ok")
+  published_gen_eng <- c(0.67, 0.67, 1, 0.67, 1, 0.67, 0.33, 0.67, 0.67, 1, 0.33, 0.67, 0.33, 0.33)
+  expect_equal(r$calibrated$Posts, published_gen_eng)
+  terms <- vapply(r$solutions$complex$models[[1]]$terms, function(t) t$expression, "")
+  expect_setequal(terms, c("ACC*VISI*AUTO*~INCEN2", "ACC*AUTO*INCEN1*INCEN2", "VISI*AUTO*INCEN1*~INCEN2"))
+  fit <- r$solutions$complex$models[[1]]$solution_fit
+  expect_equal(fit$inclS, 1.000, tolerance = 5e-4)   # Table 4: overall solution consistency 1.000
+  expect_equal(fit$PRI, 1.000, tolerance = 5e-4)     # overall solution PRI 1.000
+  expect_equal(fit$covS, 0.815, tolerance = 5e-4)    # overall solution coverage 0.815
+})
+
+test_that("different breakpoints change the calibrated outcome and are reported, not hidden", {
+  a <- run_pipeline(isj_input())
+  b <- run_pipeline(isj_input(list(break_0 = 0, break_33 = 10, break_67 = 60)))
+  expect_false(identical(a$calibrated$Posts, b$calibrated$Posts))
+  expect_identical(b$status %in% c("ok", "valid_no_solution"), TRUE)
+})

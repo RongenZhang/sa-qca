@@ -83,7 +83,9 @@ class VariableIn(BaseModel):
     instrument: str = ""
     units: str = ""
     dir_exp: int | None = None
+    calibration: str = "direct"  # direct | breakpoints | precalibrated
     anchors: dict[str, float | None] | None = None
+    breakpoints: dict[str, float | None] | None = None
 
 
 class ConfigureIn(BaseModel):
@@ -160,8 +162,10 @@ def project_setup(pid: str, _: None = Depends(not_on_demo)) -> dict[str, Any]:
 @app.post("/api/projects/{pid}/configure")
 def configure_project(pid: str, body: ConfigureIn, _: None = Depends(not_on_demo)) -> dict[str, Any]:
     cfg = body.model_dump()
-    cfg["variables"] = [{**v, "anchors": v["anchors"] if v["anchors"] and any(x is not None for x in v["anchors"].values()) else None}
-                        for v in cfg["variables"]]
+    def given(d: dict[str, float | None] | None) -> dict[str, float | None] | None:
+        return d if d and any(x is not None for x in d.values()) else None
+
+    cfg["variables"] = [{**v, "anchors": given(v["anchors"]), "breakpoints": given(v["breakpoints"])} for v in cfg["variables"]]
     try:
         with service.session() as s:
             return configure(s, pid, cfg)
@@ -203,12 +207,10 @@ def estimate(body: RunIn) -> dict[str, Any]:
     tokens_in = len(render_prompt(load_default_template(), d["variables"], "c", role)) // 4
     mech = 0
     if body.arms.mechanical:
-        from app.domain.mechanical import generate_skaaning_configs
-
         if not d["has_reference"]:
             raise HTTPException(400, "the mechanical source needs the analyst's original anchors and cutoffs; add them in step 1")
         try:
-            mech = len(generate_skaaning_configs(d["data"], d["reference"], d["directions"], d["outcome"], d["reference_cutoffs"]))
+            mech = len(service.mechanical_configs(d))
         except ValueError as e:
             raise HTTPException(400, str(e)) from e
     out: dict[str, Any] = {"llm_calls_min": calls, "llm_calls_max": calls * 2, "mechanical_runs": mech,
@@ -316,7 +318,6 @@ def bundle(cfg_id: int = Depends(owned_run)) -> Response:
 
 
 _verify_lock = threading.Lock()
-_verify_jobs: dict[int, dict[str, Any]] = {}
 
 
 @app.post("/api/runs/{cfg_id}/verify", status_code=202)
@@ -325,22 +326,22 @@ def verify(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
     from app.exports.bundle import BundleError, build_zip
     from app.exports.verify import verify_bundle
 
-    if _verify_jobs.get(cfg_id, {}).get("state") == "running":
+    if service.VERIFY_JOBS.get(cfg_id, {}).get("state") == "running":
         return {"state": "running"}
     # Verification starts another R process; on the memory-limited public demo only one may run at a time.
     if config.demo_only() and not _verify_lock.acquire(blocking=False):
         raise HTTPException(429, "another verification is in progress; please try again in a minute")
-    _verify_jobs[cfg_id] = {"state": "running"}
+    service.VERIFY_JOBS[cfg_id] = {"state": "running"}
 
     def work() -> None:
         try:
             with service.session() as s:
                 data = build_zip(s, cfg_id)
-            _verify_jobs[cfg_id] = {"state": "done", "result": verify_bundle(data)}
+            service.VERIFY_JOBS[cfg_id] = {"state": "done", "result": verify_bundle(data)}
         except BundleError as e:
-            _verify_jobs[cfg_id] = {"state": "done", "result": {"ok": False, "error": str(e)}}
+            service.VERIFY_JOBS[cfg_id] = {"state": "done", "result": {"ok": False, "error": str(e)}}
         except Exception as e:  # report instead of leaving the page waiting forever
-            _verify_jobs[cfg_id] = {"state": "done", "result": {"ok": False, "error": f"verification failed: {e}"}}
+            service.VERIFY_JOBS[cfg_id] = {"state": "done", "result": {"ok": False, "error": f"verification failed: {e}"}}
         finally:
             if config.demo_only() and _verify_lock.locked():
                 _verify_lock.release()
@@ -351,7 +352,7 @@ def verify(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
 
 @app.get("/api/runs/{cfg_id}/verify")
 def verify_status(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
-    return _verify_jobs.get(cfg_id, {"state": "none"})
+    return service.VERIFY_JOBS.get(cfg_id, {"state": "none"})
 
 
 @app.get("/api/runs/{cfg_id}/report", response_class=HTMLResponse)

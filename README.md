@@ -37,6 +37,9 @@ Start with the bundled **demo project** (synthetic data). In step 3 choose "Scri
 
 Step 1 › "Upload my own data": CSV (comma, semicolon or tab) or Excel (first sheet), up to 10 MB. Choose the outcome and conditions; give each a construct definition and measurement instrument; declare its direction; optionally enter your original anchors, cutoffs and directional expectations (needed for the mechanical source and the comparison with your published solution). Variable names must start with a letter and use letters, digits and underscores. Rows with missing values are dropped only if you tick the listwise-deletion box. The file stays in the local database; models receive only definitions and summary statistics, never rows.
 
+## Calibration kinds
+Each variable is calibrated with three anchors (direct), with breakpoints on a four-value scale, or taken as already calibrated (pass-through, for example coder-assigned 0 / 0.33 / 0.67 / 1 scores). See [docs/calibration-kinds.md](docs/calibration-kinds.md).
+
 ## Exports and verification
 
 The results screen offers a **replication bundle** (ZIP: analysis data, project definitions, approved roles, every rendered prompt, every raw model response, the decisions handed to R, the R code, recorded results, environment versions and a SHA-256 manifest; never API keys), an **HTML report** with a draft AI-use statement filled from the run's actual models and parameters (print to PDF from the browser), and **Verify bundle**, which re-runs the QCA computation with no LLM calls and checks every stored result is reproduced exactly:
@@ -63,7 +66,7 @@ A scripted, no-key version of the tool can be deployed free on Hugging Face Spac
 
 ## Documentation
 
-[docs/demo-script.md](docs/demo-script.md) is a 10-minute speaker script for a live demo; [docs/protocol-to-code.md](docs/protocol-to-code.md) maps each protocol step to the code; [docs/similarity-metrics.md](docs/similarity-metrics.md) documents the metrics.
+[docs/demo-script.md](docs/demo-script.md) is a 10-minute speaker script for a live demo; [docs/calibration-kinds.md](docs/calibration-kinds.md) explains the three ways to calibrate a variable; [docs/protocol-to-code.md](docs/protocol-to-code.md) maps each protocol step to the code; [docs/similarity-metrics.md](docs/similarity-metrics.md) documents the metrics.
 
 ## Citing
 

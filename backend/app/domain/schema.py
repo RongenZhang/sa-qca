@@ -29,8 +29,40 @@ def _calibration_def() -> dict[str, Any]:
     }
 
 
-def build_decision_schema(condition_names: list[str]) -> dict[str, Any]:
-    ref = {"$ref": "#/$defs/calibration"}
+BREAK_KEYS = ("break_0", "break_33", "break_67")
+KINDS = ("direct", "breakpoints", "precalibrated")
+
+
+def _breakpoints_def() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["breakpoints", "rationale"],
+        "properties": {
+            "breakpoints": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(BREAK_KEYS),
+                "properties": {k: {"type": "number"} for k in BREAK_KEYS},
+            },
+            "rationale": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": list(BREAK_KEYS),
+                "properties": {k: {"type": "string", "minLength": 1} for k in BREAK_KEYS},
+            },
+        },
+    }
+
+
+def build_decision_schema(conditions: list[str] | list[tuple[str, str]], outcome_kind: str = "direct") -> dict[str, Any]:
+    """`conditions` is a list of names (all calibrated directly) or of (name, kind) pairs. Conditions whose values are
+    already calibrated (kind "precalibrated") are fixed and therefore do not appear in the decision at all."""
+    pairs = [(c, "direct") if isinstance(c, str) else c for c in conditions]
+    asked = [(n, k) for n, k in pairs if k != "precalibrated"]
+    ref = {"direct": {"$ref": "#/$defs/calibration"}, "breakpoints": {"$ref": "#/$defs/breakpoints"}}
+    if outcome_kind not in ref:
+        raise ValueError(f"the outcome must be calibrated by the agent (kind direct or breakpoints), not {outcome_kind!r}")
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "title": "CalibrationDecision",
@@ -41,10 +73,10 @@ def build_decision_schema(condition_names: list[str]) -> dict[str, Any]:
             "conditions": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": list(condition_names),
-                "properties": {n: dict(ref) for n in condition_names},
+                "required": [n for n, _ in asked],
+                "properties": {n: dict(ref[k]) for n, k in asked},
             },
-            "outcome": dict(ref),
+            "outcome": dict(ref[outcome_kind]),
             "truth_table": {
                 "type": "object",
                 "additionalProperties": False,
@@ -64,5 +96,5 @@ def build_decision_schema(condition_names: list[str]) -> dict[str, Any]:
                 },
             },
         },
-        "$defs": {"calibration": _calibration_def()},
+        "$defs": {"calibration": _calibration_def(), "breakpoints": _breakpoints_def()},
     }

@@ -116,9 +116,9 @@ def build_report(session: Session, cfg_id: int) -> str:
              ". Dataset checksum (SHA-256): " +
              (f"<code>{E(str(proj['dataset_sha256'])[:16])}…</code>" if proj.get("dataset_sha256") else "not recorded (run predates project snapshots)") + "</p>")
     h.append(f"<p>{E(proj['case_description'])}</p>")
-    h.append(_table(["Variable", "Role", "Direction", "Construct definition", "Instrument", "Observed range", "Original anchors"],
+    h.append(_table(["Variable", "Role", "Direction", "Construct definition", "Instrument", "Observed range", "Original anchors / breakpoints"],
                     [[x["name"], x["role"], x["direction"], x["construct_definition"], x["instrument"], f"{x['stats']['min']} to {x['stats']['max']}",
-                      " / ".join(str(a) for a in proj["reference"].get(x["name"], {}).values()) or "none"] for x in proj["variables"]]))
+                      ("fixed (already calibrated)" if x.get("calibration") == "precalibrated" else " / ".join(str(a) for a in proj["reference"].get(x["name"], {}).values()) or "none")] for x in proj["variables"]]))
     h.append("<h2>2. Method</h2><ol>"
              "<li>Stakeholder roles are derived from the study's own cases and approved by the researcher before anything runs.</li>"
              "<li>Judgment and computation are separate: a model supplies only calibration anchors and truth-table cutoffs; identical R code performs every calculation.</li>"

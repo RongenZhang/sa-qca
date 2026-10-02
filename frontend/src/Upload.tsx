@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { api, type ConfigureBody, type Demo, type UploadInfo } from './api'
+import { api, type Calibration, type ConfigureBody, type Demo, type UploadInfo } from './api'
 
-type Col = { use: boolean; role: 'condition' | 'outcome'; direction: 'positive' | 'negative'; units: string; def: string; inst: string; dirExp: string; fn: string; cr: string; fm: string }
-const blank = (): Col => ({ use: false, role: 'condition', direction: 'positive', units: '', def: '', inst: '', dirExp: '', fn: '', cr: '', fm: '' })
+type Col = { use: boolean; role: 'condition' | 'outcome'; cal: Calibration; direction: 'positive' | 'negative'; units: string; def: string; inst: string; dirExp: string; fn: string; cr: string; fm: string; b0: string; b33: string; b67: string }
+const blank = (): Col => ({ use: false, role: 'condition', cal: 'direct', direction: 'positive', units: '', def: '', inst: '', dirExp: '', fn: '', cr: '', fm: '', b0: '', b33: '', b67: '' })
 const num = (s: string) => (s.trim() === '' ? null : Number(s))
 
 const str = (x: number | null | undefined) => (x === null || x === undefined ? '' : String(x))
@@ -14,7 +14,7 @@ export function Upload({ onReady, existing }: { onReady: (p: Demo) => void; exis
     if (!existing) return {}
     return Object.fromEntries(existing.info.columns.map((c) => {
       const v = ex?.variables.find((x) => x.name === c.name)
-      return [c.name, v ? { use: true, role: v.role as Col['role'], direction: v.direction as Col['direction'], units: v.units, def: v.construct_definition, inst: v.instrument, dirExp: str(v.dir_exp), fn: str(v.anchors?.full_non_membership), cr: str(v.anchors?.crossover), fm: str(v.anchors?.full_membership) } : blank()]
+      return [c.name, v ? { use: true, role: v.role as Col['role'], cal: v.calibration ?? 'direct', direction: v.direction as Col['direction'], units: v.units, def: v.construct_definition, inst: v.instrument, dirExp: str(v.dir_exp), fn: str(v.anchors?.full_non_membership), cr: str(v.anchors?.crossover), fm: str(v.anchors?.full_membership), b0: str(v.breakpoints?.break_0), b33: str(v.breakpoints?.break_33), b67: str(v.breakpoints?.break_67) } : blank()]
     }))
   })
   const [name, setName] = useState(ex?.name ?? '')
@@ -41,8 +41,9 @@ export function Upload({ onReady, existing }: { onReady: (p: Demo) => void; exis
     const body: ConfigureBody = {
       name, case_description: desc, drop_missing: drop,
       reference_cutoffs: cons || freq ? { consistency_threshold: num(cons), frequency_threshold: num(freq), pri_threshold: num(pri) } : null,
-      variables: used.map((c) => { const v = cols[c.name]; const a = { full_non_membership: num(v.fn), crossover: num(v.cr), full_membership: num(v.fm) }
-        return { name: c.name, role: v.role, direction: v.direction, construct_definition: v.def, instrument: v.inst, units: v.units, dir_exp: v.role === 'condition' && v.dirExp !== '' ? Number(v.dirExp) : null, anchors: v.fn || v.cr || v.fm ? a : null } }),
+      variables: used.map((c) => { const v = cols[c.name]; const a = { full_non_membership: num(v.fn), crossover: num(v.cr), full_membership: num(v.fm) }; const b = { break_0: num(v.b0), break_33: num(v.b33), break_67: num(v.b67) }
+        return { name: c.name, role: v.role, direction: v.cal === 'precalibrated' ? 'positive' : v.direction, calibration: v.cal, construct_definition: v.def, instrument: v.inst, units: v.units, dir_exp: v.role === 'condition' && v.dirExp !== '' ? Number(v.dirExp) : null,
+          anchors: v.cal === 'direct' && (v.fn || v.cr || v.fm) ? a : null, breakpoints: v.cal === 'breakpoints' && (v.b0 || v.b33 || v.b67) ? b : null } }),
     }
     try { onReady(await api.configure(info.project_id, body)) } catch (e) { setErr(String(e).replace(/^Error: /, '')) }
     setBusy(false)
@@ -68,15 +69,25 @@ export function Upload({ onReady, existing }: { onReady: (p: Demo) => void; exis
             <label style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}><input type="checkbox" disabled={!c.numeric} checked={v.use} onChange={(e) => set(c.name, { use: e.target.checked })} /> <b>{c.name}</b>
               {!c.numeric && <span className="muted">not numeric, cannot be used</span>}{c.n_missing > 0 && <span className="warn">{c.n_missing} missing</span>}</label>
             {v.use && <>
-              <div className="row"><label>Role<select value={v.role} onChange={(e) => set(c.name, { role: e.target.value as Col['role'] })}><option value="condition">Condition</option><option value="outcome">Outcome</option></select></label>
-                <label>Direction<select value={v.direction} onChange={(e) => set(c.name, { direction: e.target.value as Col['direction'] })}><option value="positive">Positive (higher raw value = more membership)</option><option value="negative">Negative (higher raw value = less membership)</option></select></label>
+              <div className="row"><label>Role<select value={v.role} onChange={(e) => set(c.name, { role: e.target.value as Col['role'], ...(e.target.value === 'outcome' && v.cal === 'precalibrated' ? { cal: 'direct' as Calibration } : {}) })}><option value="condition">Condition</option><option value="outcome">Outcome</option></select></label>
+                <label>How is it calibrated?<select value={v.cal} onChange={(e) => set(c.name, { cal: e.target.value as Calibration })}>
+                  <option value="direct">Raw measure, three anchors (direct, logistic)</option>
+                  <option value="breakpoints">Raw measure, breakpoints (four-value scale 0 / 0.33 / 0.67 / 1)</option>
+                  {v.role === 'condition' && <option value="precalibrated">Already calibrated (0 to 1): use as given</option>}</select></label>
+                {v.cal !== 'precalibrated' && <label>Direction<select value={v.direction} onChange={(e) => set(c.name, { direction: e.target.value as Col['direction'] })}><option value="positive">Positive (higher raw value = more membership)</option><option value="negative">Negative (higher raw value = less membership)</option></select></label>}
                 <label>Units<input value={v.units} onChange={(e) => set(c.name, { units: e.target.value })} /></label>
                 {v.role === 'condition' && <label>Directional expectation<select value={v.dirExp} onChange={(e) => set(c.name, { dirExp: e.target.value })}><option value="">none</option><option value="1">presence contributes</option><option value="0">absence contributes</option></select></label>}</div>
+              {v.cal === 'precalibrated' && <p className="muted" role="note">These values are taken exactly as they are. Agents are not asked to calibrate this variable, and it stays fixed across all sources.</p>}
               <label>Construct definition<textarea rows={2} value={v.def} onChange={(e) => set(c.name, { def: e.target.value })} /></label>
-              <label>Measurement instrument (item wording, scale, scale anchors)<textarea rows={2} value={v.inst} onChange={(e) => set(c.name, { inst: e.target.value })} /></label>
-              <div className="row"><label>Original full non-membership<input inputMode="decimal" value={v.fn} onChange={(e) => set(c.name, { fn: e.target.value })} /></label>
+              <label>{v.cal === 'precalibrated' ? 'How the scores were assigned (coding rule, rubric)' : 'Measurement instrument (item wording, scale, scale anchors)'}<textarea rows={2} value={v.inst} onChange={(e) => set(c.name, { inst: e.target.value })} /></label>
+              {v.cal === 'direct' && <div className="row"><label>Original full non-membership<input inputMode="decimal" value={v.fn} onChange={(e) => set(c.name, { fn: e.target.value })} /></label>
                 <label>Original crossover<input inputMode="decimal" value={v.cr} onChange={(e) => set(c.name, { cr: e.target.value })} /></label>
-                <label>Original full membership<input inputMode="decimal" value={v.fm} onChange={(e) => set(c.name, { fm: e.target.value })} /></label></div></>}
+                <label>Original full membership<input inputMode="decimal" value={v.fm} onChange={(e) => set(c.name, { fm: e.target.value })} /></label></div>}
+              {v.cal === 'breakpoints' && <><div className="row"><label>Original break_0 (boundary between 0 and 0.33)<input inputMode="decimal" value={v.b0} onChange={(e) => set(c.name, { b0: e.target.value })} /></label>
+                <label>Original break_33 (0.33 and 0.67)<input inputMode="decimal" value={v.b33} onChange={(e) => set(c.name, { b33: e.target.value })} /></label>
+                <label>Original break_67 (0.67 and 1)<input inputMode="decimal" value={v.b67} onChange={(e) => set(c.name, { b67: e.target.value })} /></label></div>
+                <p className="muted">A value exactly on a boundary takes the lower of the two scores. For a negative direction the boundaries run from high to low values.</p></>}
+</>}
           </div>) })}
         <div className="card"><h3>Your original truth-table cutoffs (optional)</h3><div className="row">
           <label>Consistency (0–1)<input inputMode="decimal" value={cons} onChange={(e) => setCons(e.target.value)} /></label>

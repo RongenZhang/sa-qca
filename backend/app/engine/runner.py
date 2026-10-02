@@ -61,7 +61,7 @@ class EngineContext:
     @property
     def cond_infos(self) -> list[VarInfo]:
         return [
-            VarInfo(v.name, v.direction, v.stats["min"], v.stats["max"])
+            VarInfo(v.name, v.direction, v.stats["min"], v.stats["max"], v.calibration)
             for v in self.variables
             if v.role == "condition"
         ]
@@ -69,7 +69,7 @@ class EngineContext:
     @property
     def outcome_info(self) -> VarInfo:
         o = next(v for v in self.variables if v.role == "outcome")
-        return VarInfo(o.name, o.direction, o.stats["min"], o.stats["max"])
+        return VarInfo(o.name, o.direction, o.stats["min"], o.stats["max"], o.calibration)
 
 
 def _call(session: Session, ctx: EngineContext, run: Run, attempt: RunAttempt) -> LLMResponse | None:

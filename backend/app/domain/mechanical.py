@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.domain.schema import ANCHOR_KEYS
+from app.domain.schema import ANCHOR_KEYS, BREAK_KEYS
 from app.domain.stats import percentile_rank, quantile
 
 
@@ -41,7 +41,7 @@ def _shift_anchor(sorted_vals: list[float], x: float, shift: float) -> float:
 
 
 def _ordered(a: dict[str, float], direction: str) -> bool:
-    fn, cr, fm = (a[k] for k in ANCHOR_KEYS)
+    fn, cr, fm = list(a.values())  # the three values in order: anchors or breakpoints
     return fn < cr < fm if direction == "positive" else fn > cr > fm
 
 
@@ -161,17 +161,26 @@ def generate_skaaning_configs(
     outcome: str,
     ref_cutoffs: dict[str, Any],
     params: SkaaningParams = SkaaningParams(),
+    kinds: dict[str, str] | None = None,
 ) -> list[MechanicalConfig]:
     import itertools
+
+    kinds = kinds or {}
+
+    def keys(n: str) -> tuple[str, ...]:
+        return BREAK_KEYS if kinds.get(n) == "breakpoints" else ANCHOR_KEYS
 
     names = [n for n in reference if n != outcome]
     if len(names) > params.max_conditions:
         raise ValueError(f"{len(names)} conditions gives 3**{len(names)} - 1 configurations; raise max_conditions")
-    span = {n: max(data[n]) - min(data[n]) for n in [*names, outcome]}
+    # Offsets are a share of the observed range for anchors. Breakpoints on skewed counts would be swamped by a range-based
+    # offset, so for them the offset is a share of the distance between the reference's first and last breakpoint.
+    span = {n: (abs(reference[n][BREAK_KEYS[2]] - reference[n][BREAK_KEYS[0]]) if kinds.get(n) == "breakpoints"
+                else max(data[n]) - min(data[n])) for n in [*names, outcome]}
 
     def moved(n: str, level: int) -> dict[str, float]:
         off = level * params.shift_fraction * span[n]
-        return {k: reference[n][k] + off for k in ANCHOR_KEYS}
+        return {k: reference[n][k] + off for k in keys(n)}
 
     def cutoffs(**over: Any) -> dict[str, Any]:
         tt = {
@@ -187,7 +196,8 @@ def generate_skaaning_configs(
 
     def decision(anchor_map: dict[str, dict[str, float]], tt: dict[str, Any], note: str) -> dict[str, Any]:
         def block(n: str) -> dict[str, Any]:
-            return {"anchors": anchor_map[n], "rationale": {k: f"mechanical: {note}" for k in ANCHOR_KEYS}}
+            field = "breakpoints" if kinds.get(n) == "breakpoints" else "anchors"
+            return {field: anchor_map[n], "rationale": {k: f"mechanical: {note}" for k in keys(n)}}
 
         return {"conditions": {n: block(n) for n in names}, "outcome": block(outcome), "truth_table": cutoffs_(tt)}
 

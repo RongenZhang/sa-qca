@@ -1,0 +1,79 @@
+You are participating in a calibration exercise for fuzzy-set Qualitative Comparative
+Analysis (fsQCA). In fsQCA, each condition and the outcome is a set, and calibration gives
+every case a degree of membership in that set between 0 (fully out) and 1 (fully in). You
+have no tools and cannot look anything up. Answer from the information below only.
+{% if role %}
+
+## Your vantage point
+You are answering as: {{ role.name }}
+{{ role.description }}
+Calibrate the way a person in this position would: decide what it takes for a case to be
+clearly in, clearly out of, and ambiguous with respect to each set, given what you know about
+these cases and what membership means in practice for you.
+{% endif %}
+
+## The phenomenon and cases
+{{ case_description }}
+
+## Conditions and outcome
+{% for v in variables %}
+### {{ v.name }}: {{ 'the outcome' if v.role == 'outcome' else 'a condition' }}{% if v.units %} (raw units: {{ v.units }}){% endif %}
+
+{% if v.calibration == 'precalibrated' %}
+FIXED: this set is already calibrated. Its membership scores (between 0 and 1) were assigned by the researchers from the cases, and you must NOT calibrate it or propose anything for it. It is shown only so that you understand what it means when you calibrate the others.
+Construct definition: {{ v.construct_definition }}
+How the scores were assigned: {{ v.instrument }}
+Distribution of the membership scores across the {{ v.stats.n }} cases: min={{ v.stats.min }}, Q1={{ v.stats.q1 }}, median={{ v.stats.median }}, Q3={{ v.stats.q3 }}, max={{ v.stats.max }}, mean={{ v.stats.mean }}
+{% else %}
+{% if v.calibration == 'breakpoints' %}
+YOU CALIBRATE THIS SET WITH BREAKPOINTS. It is scored on a four-value scale: 0, 0.33, 0.67 or 1. The raw measure is divided into four bands by three boundaries (breakpoints), and every case receives the score of its band.
+{% else %}
+YOU CALIBRATE THIS SET WITH THREE ANCHORS on the raw measurement scale.
+{% endif %}
+Set membership runs {{ 'opposite to the raw scale: higher raw values mean LESS membership in this set' if v.direction == 'negative' else 'with the raw scale: higher raw values mean MORE membership in this set' }}.
+Construct definition: {{ v.construct_definition }}
+Measurement instrument: {{ v.instrument }}
+Observed distribution of the raw measure across the {{ v.stats.n }} cases: min={{ v.stats.min }}, Q1={{ v.stats.q1 }}, median={{ v.stats.median }}, Q3={{ v.stats.q3 }}, max={{ v.stats.max }}, mean={{ v.stats.mean }}
+Histogram (lower edge to upper edge: number of cases): {{ v.histogram_text }}
+{% endif %}
+{% endfor %}
+
+## Your task
+Calibrate each condition and the outcome that is marked "YOU CALIBRATE". Do not mention fixed sets in your answer. There are two ways a set can be calibrated:
+
+Three anchors (direct calibration), on the RAW measurement scale:
+- full_non_membership: the raw value at or beyond which a case is clearly NOT in the set (membership about 0.05)
+- crossover: the raw value of maximum ambiguity, where a case is neither more in nor more out of the set (membership 0.50)
+- full_membership: the raw value at or beyond which a case is clearly IN the set (membership about 0.95)
+For a set whose membership runs with the raw scale, full_non_membership < crossover < full_membership.
+For a set whose membership runs opposite to the raw scale, the order is reversed. Anchors must lie within the
+observed range shown above.
+
+Three breakpoints (four-value calibration), on the RAW measurement scale:
+- break_0: the boundary between score 0 and score 0.33. A case at or beyond it (on the side of less membership) scores 0 (fully out). It may lie just outside the observed range if you judge that no case is fully out.
+- break_33: the boundary between score 0.33 and score 0.67 (cases that only minimally or partly meet the idea of the set, versus cases that substantially meet it)
+- break_67: the boundary between score 0.67 and score 1 (cases that substantially meet it, versus cases that fully meet it)
+For a set whose membership runs with the raw scale: break_0 < break_33 < break_67, and a case exactly on a boundary takes the LOWER of the two scores. For a set whose membership runs opposite to the raw scale the order is reversed. break_33 and break_67 must lie within the observed range shown above.
+
+Write each rationale as two to four sentences of substantive reasoning. A good rationale:
+(a) says what a case at that raw value looks like in substance, using the construct definition and the wording or
+scale points of the measurement instrument;
+(b) explains why the anchor or breakpoint is not noticeably lower or higher, that is, what would change in the case's standing in the set;
+(c) reflects the vantage point you were given, if any, and says what a different reader might see differently;
+(d) uses the observed distribution only as an empirical check on plausibility, never as the reason for the value.
+A rationale that merely restates a percentile, the shape of the distribution, or the definition of the anchor is not acceptable.
+
+Also choose the truth-table cutoffs, each with a substantive rationale of the same kind:
+- consistency_threshold in [0,1]: the minimum raw consistency for a combination of conditions to count as sufficient for the outcome. Explain how much inconsistency you consider tolerable given measurement error and the nature of these cases.
+- frequency_threshold (integer >= 1): the minimum number of cases for a combination to be considered. Explain how many cases you consider enough evidence given the number of cases and conditions in this study.
+- pri_threshold (optional, or null): if you set one, say what it guards against.
+
+Return ONLY a JSON object matching this schema, with no text before or after it:
+{{ json_schema }}
+{% if validation_errors %}
+
+## Your previous answer was rejected
+{% for e in validation_errors %}- {{ e }}
+{% endfor %}
+Return a corrected complete JSON object.
+{% endif %}

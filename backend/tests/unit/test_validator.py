@@ -135,3 +135,62 @@ def test_multiple_errors_reported():
     d["conditions"]["A"]["anchors"] = {"full_non_membership": 9, "crossover": 4, "full_membership": 2}
     res = check(d)
     assert codes(res) == {"ordering", "range"}
+
+
+# ---- calibration kinds -------------------------------------------------------------------------------------
+
+BP_OUT = VarInfo("Y", "positive", 4, 1913, "breakpoints")
+PRE = [VarInfo("A", "positive", 0, 1, "precalibrated"), VarInfo("B", "positive", 0, 1, "precalibrated")]
+
+
+def bp_decision(b0=0, b1=15, b2=90):
+    r = {k: "because" for k in ("break_0", "break_33", "break_67")}
+    return {"conditions": {}, "outcome": {"breakpoints": {"break_0": b0, "break_33": b1, "break_67": b2}, "rationale": r},
+            "truth_table": {"consistency_threshold": 0.8, "frequency_threshold": 1, "pri_threshold": None,
+                            "consistency_rationale": "c", "frequency_rationale": "f", "pri_rationale": None}}
+
+
+def check_bp(d, tol=0.0, out=BP_OUT):
+    return validate_decision(json.dumps(d), PRE, out, tol)
+
+
+def test_published_breakpoints_are_valid_even_though_break_0_is_below_the_observed_minimum():
+    assert check_bp(bp_decision(0, 15, 90)).ok  # no platform has 0 proposals: break_0 may sit just off the data
+
+
+def test_precalibrated_conditions_must_not_appear_in_the_decision():
+    d = bp_decision()
+    d["conditions"]["A"] = {"anchors": {"full_non_membership": 0, "crossover": 0.5, "full_membership": 1},
+                            "rationale": {k: "x" for k in ("full_non_membership", "crossover", "full_membership")}}
+    assert codes(check_bp(d)) == {"schema"}
+
+
+def test_breakpoint_ordering_follows_orientation():
+    assert codes(check_bp(bp_decision(0, 90, 15))) == {"ordering"}
+    assert codes(check_bp(bp_decision(0, 15, 15))) == {"ordering"}
+    neg = VarInfo("Y", "negative", 4, 1913, "breakpoints")
+    assert check_bp(bp_decision(500, 100, 20), out=neg).ok
+    assert codes(check_bp(bp_decision(20, 100, 500), out=neg)) == {"ordering"}
+
+
+def test_breakpoint_range_rules():
+    assert codes(check_bp(bp_decision(0, 15, 5000))) == {"range"}        # b2 above the observed maximum
+    assert codes(check_bp(bp_decision(0, 1, 90))) == {"range"}           # b1 below the observed minimum
+    assert codes(check_bp(bp_decision(-5000, 15, 90))) == {"range"}      # b0 more than one range below the data
+    assert check_bp(bp_decision(-100, 15, 90)).ok
+
+
+def test_breakpoint_blank_rationale_and_missing_keys():
+    d = bp_decision()
+    d["outcome"]["rationale"]["break_33"] = "   "
+    assert codes(check_bp(d)) == {"blank_rationale"}
+    d = bp_decision()
+    del d["outcome"]["breakpoints"]["break_67"]
+    assert codes(check_bp(d)) == {"schema"}
+
+
+def test_an_outcome_that_is_already_calibrated_cannot_be_asked_for():
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        validate_decision("{}", PRE, VarInfo("Y", "positive", 0, 1, "precalibrated"))

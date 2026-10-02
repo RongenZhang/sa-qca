@@ -21,6 +21,7 @@ def demo(tmp_path, monkeypatch):
     monkeypatch.setenv("SA_QCA_MAX_CONCURRENT", "1")
     service.init_db(f"sqlite:///{tmp_path}/t.sqlite")
     service.BATCHES.clear()
+    service.VERIFY_JOBS.clear()
 
     def slow_r(payload):
         time.sleep(0.4)
@@ -135,3 +136,32 @@ def test_verify_runs_in_the_background_and_is_private(demo):
             break
         time.sleep(0.5)
     assert st["state"] == "done" and "ok" in st["result"]
+
+
+def test_a_reused_run_number_never_shows_an_earlier_verification(demo):
+    rid = demo.post("/api/runs", json=GEN, headers=A).json()["run_config_id"]
+    finish(demo, rid, A)
+    assert demo.post(f"/api/runs/{rid}/verify", headers=A).status_code == 202
+    for _ in range(100):
+        if demo.get(f"/api/runs/{rid}/verify", headers=A).json()["state"] == "done":
+            break
+        time.sleep(0.5)
+    with service.session() as s:  # simulate the run being purged and its number reused
+        s.get(RunConfig, rid).created_at = datetime.utcnow() - timedelta(hours=30)
+        s.commit()
+    assert service.purge_old(24) == 1
+    assert service.VERIFY_JOBS == {}
+    rid2 = demo.post("/api/runs", json=GEN, headers=B).json()["run_config_id"]
+    assert demo.get(f"/api/runs/{rid2}/verify", headers=B).json() == {"state": "none"}
+
+
+def test_a_stale_worker_cannot_change_the_state_of_a_newer_batch(demo):
+    rid = demo.post("/api/runs", json=GEN, headers=A).json()["run_config_id"]
+    entry = service.BATCHES[rid]
+    stale_token = "not-this-batch"
+    # what a leftover worker from an earlier batch with the same run number would try to do when it finishes
+    if service.BATCHES.get(rid, {}).get("token") == stale_token:
+        service.BATCHES[rid]["state"] = "completed"
+    assert service.BATCHES[rid]["token"] != stale_token and entry["state"] in ("running", "completed")
+    finish(demo, rid, A)
+    assert demo.get(f"/api/runs/{rid}/status", headers=A).json()["state"] == "completed"

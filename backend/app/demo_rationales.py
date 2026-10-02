@@ -120,3 +120,35 @@ def frequency_rationale(role: str, f: int, n: int, k: int) -> str:
 def pri_rationale(p: float) -> str:
     return (f"A PRI cut of {p:g} excludes combinations that are almost as consistent with the absence of the outcome as with its presence, "
             f"which a consistency cutoff alone would let through; I set it low enough not to discard combinations that are genuinely informative.")
+
+
+def breakpoint_rationale(role: str, role_desc: str, var: VariableSpec, key: str, value: float, values: list[float]) -> str:
+    """Rationale for a four-value (breakpoint) calibration. Scripted text built from the variable's own definition."""
+    d = _lc(var.construct_definition)
+    inst = var.instrument.strip().rstrip(".") or "the measurement scale"
+    neg = var.direction == "negative"
+    side = "at or above" if neg else "at or below"
+    beyond = "below" if neg else "above"
+    x = f"{value:g}"
+    if key == "break_0":
+        a = (f"A case {side} {x} scores 0 and is treated as fully outside the set: it shows none of what the construct names ({d}); "
+             f"read against the instrument ({inst}), this is the part of the scale that marks complete absence, not merely little.")
+        b = ("Moving this boundary further toward more membership would push cases with some real presence into the fully-out category, "
+             "while moving it the other way would leave nobody scored 0 and blur the distinction between absent and minimal.")
+    elif key == "break_33":
+        a = (f"The boundary at {x} separates cases that only minimally or partly meet the idea of the set ({d}) from those that meet it "
+             f"substantially: {side} {x} a case scores 0.33, {beyond} it a case scores at least 0.67. On the instrument ({inst}) this is the point at which the evidence stops being thin.")
+        b = ("Placing it much closer to the empty end would credit cases with scant evidence as substantial; placing it much closer to the "
+             "full end would demote cases that already meet the idea in a substantive way.")
+    else:
+        a = (f"The boundary at {x} separates cases that substantially meet the idea ({d}) from those that fully meet it: {side} {x} a case scores 0.67, "
+             f"{beyond} it a case scores 1. On the instrument ({inst}) this marks the level at which nothing more could reasonably be asked of a case.")
+        b = ("Lowering it would give full membership to cases that are strong but still developing, while raising it would reserve full "
+             "membership for so few cases that the set stops distinguishing among the strong ones.")
+    lens = _lens(role, role_desc, {"break_0": "out", "break_33": "mid", "break_67": "in"}[key])
+    s = sorted(values)
+    n = len(s)
+    on_low = sum(1 for v in s if (v >= value if neg else v <= value))
+    check = (f"As an empirical check only, {on_low} of the {n} cases fall {side} {x} and {n - on_low} {beyond} it, so the boundary actually "
+             f"divides the cases it is meant to divide.")
+    return " ".join([a, b, lens, check])

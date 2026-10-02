@@ -12,7 +12,7 @@ from jinja2 import Environment, StrictUndefined
 
 from app.domain.schema import build_decision_schema
 
-DEFAULT_TEMPLATE_VERSION = "default_v2"  # v1 is kept so earlier runs stay reproducible
+DEFAULT_TEMPLATE_VERSION = "default_v3"  # v1 and v2 are kept so earlier runs stay reproducible
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,7 @@ class VariableSpec:
     instrument: str
     units: str
     stats: dict[str, Any]
+    calibration: str = "direct"  # direct | breakpoints | precalibrated
 
 
 def load_template(version: str) -> str:
@@ -76,7 +77,9 @@ def render_prompt(
     validation_errors: list[str] | None = None,
 ) -> str:
     env = Environment(undefined=StrictUndefined, keep_trailing_newline=True, trim_blocks=True, lstrip_blocks=True)
-    schema = build_decision_schema([v.name for v in variables if v.role == "condition"])
+    outcome = next((v for v in variables if v.role == "outcome"), None)
+    schema = build_decision_schema([(v.name, v.calibration) for v in variables if v.role == "condition"],
+                                   outcome.calibration if outcome else "direct")
     ctx_vars = [
         {**v.__dict__, "histogram_text": _histogram_text(v.stats)} for v in variables
     ]

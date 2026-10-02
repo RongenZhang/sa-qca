@@ -48,21 +48,29 @@ export function RobustnessHeat({ rows, arms }: { rows: { path: string; share_by_
     </svg>)
 }
 
-export function AnchorStrip({ variable, stats, reference, rows, arms, colors }: { variable: string; stats: Stats; reference?: Record<string, number>; rows: { arm: string; run_id: number; a: Record<string, number> }[]; arms: string[]; colors: Record<string, string> }) {
-  const W = 640, L = 130, H0 = 78, rh = 22, all = [...(reference ? ['reference'] : []), ...arms], H = H0 + rh * all.length + 22, span = stats.max - stats.min || 1
-  const x = (v: number) => L + ((v - stats.min) / span) * (W - L - 12), max = Math.max(...stats.histogram.map((b) => b.count), 1)
+const TRI_KEYS = [['full_non_membership', 'crossover', 'full_membership'], ['break_0', 'break_33', 'break_67']]
+const tri = (a: Record<string, number>): number[] => (TRI_KEYS.find((ks) => ks.every((k) => k in a)) ?? TRI_KEYS[0]).map((k) => a[k])
+
+export function AnchorStrip({ variable, stats, reference, rows, arms, colors, kind = 'direct' }: { variable: string; stats: Stats; reference?: Record<string, number>; rows: { arm: string; run_id: number; a: Record<string, number> }[]; arms: string[]; colors: Record<string, string>; kind?: string }) {
+  const bp = kind === 'breakpoints'
+  const logScale = bp && stats.max > 10 * Math.max(stats.q3, 1)  // skewed counts: a linear axis would squash every boundary at the left edge
+  const T = (v: number) => (logScale ? Math.log10(1 + Math.max(v, 0)) : v), lo = T(stats.min), hi = T(stats.max), span = hi - lo || 1
+  const W = 640, L = 130, H0 = 78, rh = 22, all = [...(reference ? ['reference'] : []), ...arms], H = H0 + rh * all.length + 22
+  const x = (v: number) => Math.max(L, Math.min(W - 12, L + ((T(v) - lo) / span) * (W - L - 12))), max = Math.max(...stats.histogram.map((b) => b.count), 1)
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`Anchors proposed for ${variable} by anchor source, over the observed distribution`} fontFamily="system-ui,sans-serif" fontSize={11}>
+    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label={`${bp ? 'Breakpoints' : 'Anchors'} proposed for ${variable} by anchor source, over the observed distribution`} fontFamily="system-ui,sans-serif" fontSize={11}>
       <Bg w={W} h={H} />
-      {stats.histogram.map((b, i) => <rect key={i} x={x(b.lower) + 1} y={H0 - (b.count / max) * (H0 - 12)} width={Math.max(1, x(b.upper) - x(b.lower) - 2)} height={(b.count / max) * (H0 - 26)} fill="#d9dde1" />)}
+      {stats.histogram.map((b, i) => <rect key={i} x={x(b.lower) + 1} y={H0 - (b.count / max) * (H0 - 26)} width={Math.max(1, x(b.upper) - x(b.lower) - 2)} height={(b.count / max) * (H0 - 26)} fill="#d9dde1" />)}
       {all.map((a, k) => {
         const yy = H0 + rh * k + rh / 2, col = a === 'reference' ? '#000' : colors[a]
         const rs = a === 'reference' && reference ? [{ run_id: 0, a: reference }] : rows.filter((r) => r.arm === a)
         return <g key={a}><text x={L - 8} y={yy + 4} textAnchor="end" fill={INK}>{a === 'reference' ? "analyst's original" : short(a)}</text>
-          {rs.map((r) => <g key={r.run_id}><line x1={x(r.a.full_non_membership)} x2={x(r.a.full_membership)} y1={yy} y2={yy} stroke={col} strokeOpacity={a === 'reference' ? 1 : 0.25} strokeWidth={a === 'reference' ? 2 : 4} strokeDasharray={a === 'reference' ? '5 3' : undefined} />
-            <circle cx={x(r.a.crossover)} cy={yy} r={3.2} fill={col} stroke="#fff" strokeWidth={0.8}><title>{`${a} run ${r.run_id}: ${r.a.full_non_membership.toFixed(2)} / ${r.a.crossover.toFixed(2)} / ${r.a.full_membership.toFixed(2)}`}</title></circle></g>)}</g>
+          {rs.map((r) => { const [p0, p1, p2] = tri(r.a)
+            return <g key={r.run_id}><line x1={x(p0)} x2={x(p2)} y1={yy} y2={yy} stroke={col} strokeOpacity={a === 'reference' ? 1 : 0.25} strokeWidth={a === 'reference' ? 2 : 4} strokeDasharray={a === 'reference' ? '5 3' : undefined} />
+              {bp ? [p0, p1, p2].map((p, i) => <line key={i} x1={x(p)} x2={x(p)} y1={yy - 6} y2={yy + 6} stroke={col} strokeWidth={2}><title>{`${a} run ${r.run_id}: boundary ${['0|0.33', '0.33|0.67', '0.67|1'][i]} at ${p.toFixed(2)}`}</title></line>)
+                : <circle cx={x(p1)} cy={yy} r={3.2} fill={col} stroke="#fff" strokeWidth={0.8}><title>{`${a} run ${r.run_id}: ${p0.toFixed(2)} / ${p1.toFixed(2)} / ${p2.toFixed(2)}`}</title></circle>}</g> })}</g>
       })}
-      <text x={L} y={H - 6} fill="#5b6670">{stats.min}</text><text x={W - 12} y={H - 6} textAnchor="end" fill="#5b6670">{stats.max}</text>
-      <text x={L} y={12} fill={INK}>{variable}: dot = crossover, bar = full non-membership to full membership</text>
+      <text x={L} y={H - 6} fill="#5b6670">{stats.min}</text><text x={W - 12} y={H - 6} textAnchor="end" fill="#5b6670">{stats.max}{logScale ? ' (log scale)' : ''}</text>
+      <text x={L} y={12} fill={INK}>{variable}: {bp ? 'ticks = the three breakpoints between scores 0 | 0.33 | 0.67 | 1' : 'dot = crossover, bar = full non-membership to full membership'}</text>
     </svg>)
 }
