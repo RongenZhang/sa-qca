@@ -40,6 +40,10 @@ export default function App() {
   const [showIntro, setShowIntro] = useState(() => { try { return localStorage.getItem('saqca.introSeen') !== '1' } catch { return true } })
   const closeIntro = () => { setShowIntro(false); try { localStorage.setItem('saqca.introSeen', '1') } catch { /* ignore */ } }
   const [projectId, setProjectId] = usePersisted('projectId', 'demo')
+  useEffect(() => {  // a link such as /?project=p_abc123 (printed by `python -m app.cli load-project`) opens that project
+    const p = new URLSearchParams(window.location.search).get('project')
+    if (p) { setProjectId(p); window.history.replaceState({}, '', window.location.pathname) }
+  }, [setProjectId])
   useEffect(() => { api.project(projectId).then(setDemo).catch((e) => { setErr(String(e).replace(/^Error: /, '')); if (projectId !== 'demo') setProjectId('demo') }) }, [projectId, setProjectId])
   const switchProject = (p: Demo) => {
     if (p.id !== projectId) { setRunId(null); setStatus(null); setResults(null) }  // editing the same project keeps earlier runs on screen
@@ -96,8 +100,10 @@ function Step1({ demo, expert, onProject, demoOnly }: { demo: Demo; expert: bool
       <h3>{v.name} <span className="tag">{v.role}</span> <span className="tag">{v.direction}</span></h3>
       <div className="row"><div><p><b>Construct:</b> {v.construct_definition || <span className="warn">missing</span>}</p><p><b>Instrument:</b> {v.instrument || <span className="warn">missing</span>}</p>
         <p className="muted">min {v.stats.min} · Q1 {v.stats.q1.toFixed(2)} · median {v.stats.median.toFixed(2)} · Q3 {v.stats.q3.toFixed(2)} · max {v.stats.max} · mean {v.stats.mean.toFixed(2)}</p>
-        <p className="muted">Analyst's original <Tip k="anchors">anchors</Tip>: {Object.values(demo.reference[v.name] ?? {}).join(' / ')}</p></div>
-        <Hist stats={v.stats} marks={Object.values(demo.reference[v.name] ?? {})} label={`Histogram of ${v.name} with the analyst's anchors marked`} /></div>
+        {v.calibration === 'precalibrated' ? <p className="muted"><b>Already calibrated:</b> these membership scores are used exactly as given and stay fixed for every source.</p>
+          : v.calibration === 'breakpoints' ? <p className="muted">Calibrated on a four-value scale (0 / 0.33 / 0.67 / 1). Analyst's original breakpoints: {Object.values(demo.reference[v.name] ?? {}).join(' / ') || 'not given'}</p>
+          : <p className="muted">Analyst's original <Tip k="anchors">anchors</Tip>: {Object.values(demo.reference[v.name] ?? {}).join(' / ')}</p>}</div>
+        <Hist stats={v.stats} marks={v.calibration === 'precalibrated' ? [] : Object.values(demo.reference[v.name] ?? {})} label={`Histogram of ${v.name}${v.calibration === 'precalibrated' ? ' (membership scores)' : " with the analyst's calibration marked"}`} /></div>
     </div>))}
     {expert && <pre>{JSON.stringify(demo, null, 1)}</pre>}</>}
   </section>)

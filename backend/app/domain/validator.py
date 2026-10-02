@@ -13,7 +13,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from app.domain.schema import ANCHOR_KEYS, build_decision_schema
+from app.domain.schema import ANCHOR_KEYS, BREAK_KEYS, build_decision_schema
 
 
 @dataclass(frozen=True)
@@ -22,6 +22,7 @@ class VarInfo:
     direction: str  # "positive" | "negative"
     min: float
     max: float
+    kind: str = "direct"  # direct | breakpoints | precalibrated
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,34 @@ def _is_num(x: Any) -> bool:
     return isinstance(x, (int, float)) and not isinstance(x, bool)
 
 
+def _check_breakpoints(var: VarInfo, block: dict[str, Any], base: str, tolerance: float) -> list[ValidationError]:
+    """Four-value (indirect) calibration: three boundaries between the scores 0 | 0.33 | 0.67 | 1. Orientation is
+    carried by their order. b1 and b2 must lie in the observed range (plus tolerance). b0 only decides whether any
+    case scores 0, so it may lie beyond the observed range on the empty side, by at most one range width."""
+    errs: list[ValidationError] = []
+    b = [block["breakpoints"][k] for k in BREAK_KEYS]
+    if not all(math.isfinite(x) for x in b):
+        return [ValidationError("schema", base, "breakpoints must be finite numbers")]
+    inc, dec = b[0] < b[1] < b[2], b[0] > b[1] > b[2]
+    if var.direction == "positive" and not inc:
+        errs.append(ValidationError("ordering", base, "positive orientation requires break_0 < break_33 < break_67"))
+    elif var.direction == "negative" and not dec:
+        errs.append(ValidationError("ordering", base, "negative orientation requires break_0 > break_33 > break_67"))
+    span = var.max - var.min
+    pad = tolerance * span
+    lo, hi = var.min - pad, var.max + pad
+    for k, x in zip(BREAK_KEYS[1:], b[1:], strict=True):
+        if x < lo or x > hi:
+            errs.append(ValidationError("range", f"{base}.breakpoints.{k}", f"{x} is outside the allowed range [{lo}, {hi}]"))
+    outer_lo, outer_hi = (var.min - span, hi) if var.direction == "positive" else (lo, var.max + span)
+    if b[0] < outer_lo or b[0] > outer_hi:
+        errs.append(ValidationError("range", f"{base}.breakpoints.break_0", f"{b[0]} is outside the allowed range [{outer_lo}, {outer_hi}]"))
+    for k in BREAK_KEYS:
+        if not block["rationale"][k].strip():
+            errs.append(ValidationError("blank_rationale", f"{base}.rationale.{k}", "rationale is blank"))
+    return errs
+
+
 def validate_decision(
     raw_text: str,
     conditions: list[VarInfo],
@@ -58,7 +87,8 @@ def validate_decision(
     except (ValueError, TypeError) as e:
         return ValidationResult(False, [ValidationError("json_parse", "$", str(e))])
 
-    schema = build_decision_schema([c.name for c in conditions])
+    asked = [c for c in conditions if c.kind != "precalibrated"]
+    schema = build_decision_schema([(c.name, c.kind) for c in asked], outcome.kind)
     schema_errors = sorted(
         Draft202012Validator(schema).iter_errors(parsed), key=lambda e: list(map(str, e.path))
     )
@@ -72,10 +102,13 @@ def validate_decision(
         )
 
     errors: list[ValidationError] = []
-    for var, block in [(c, parsed["conditions"][c.name]) for c in conditions] + [
+    for var, block in [(c, parsed["conditions"][c.name]) for c in asked] + [
         (outcome, parsed["outcome"])
     ]:
         base = "$.outcome" if var is outcome else f"$.conditions.{var.name}"
+        if var.kind == "breakpoints":
+            errors += _check_breakpoints(var, block, base, tolerance)
+            continue
         a = [block["anchors"][k] for k in ANCHOR_KEYS]
         fn, cr, fm = a
         if not all(math.isfinite(x) for x in a):

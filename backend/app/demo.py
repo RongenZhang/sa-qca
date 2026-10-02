@@ -9,7 +9,13 @@ import re
 from pathlib import Path
 from typing import Any
 
-from app.demo_rationales import anchor_rationale, consistency_rationale, frequency_rationale, pri_rationale
+from app.demo_rationales import (
+    anchor_rationale,
+    breakpoint_rationale,
+    consistency_rationale,
+    frequency_rationale,
+    pri_rationale,
+)
 from app.domain.prompt import VariableSpec
 from app.domain.stats import describe
 from app.llm.base import LLMProvider, LLMResponse
@@ -30,11 +36,13 @@ def load_demo() -> dict[str, Any]:
     data = {k: [float(r[k]) for r in rows] for k in rows[0] if k != "case"}
     variables = [
         VariableSpec(v["name"], v["role"], v["direction"], v["construct_definition"], v["instrument"],
-                     v.get("units", ""), describe(data[v["name"]]))
+                     v.get("units", ""), describe(data[v["name"]]), v.get("calibration", "direct"))
         for v in proj["variables"]
     ]
     return {
         "project": proj,
+        "kinds": {v.name: v.calibration for v in variables},
+        "condition_order": [v.name for v in variables if v.role == "condition"],
         "data": data,
         "variables": variables,
         "outcome": next(v.name for v in variables if v.role == "outcome"),
@@ -77,20 +85,42 @@ class DemoProvider(LLMProvider):
     def _decision(self, shift: float, break_order: bool, role: str = "generic", role_desc: str = "") -> dict[str, Any]:
         d = self.demo
         stats = {v.name: v.stats for v in d["variables"]}
-        first_cond = next(v.name for v in d["variables"] if v.role == "condition")
+        asked = [v for v in d["variables"] if v.role == "condition" and v.calibration != "precalibrated"]
+        first_cond = asked[0].name if asked else d["outcome"]
 
         def block(n: str) -> dict[str, Any]:
+            var = next(v for v in d["variables"] if v.name == n)
             span = stats[n]["max"] - stats[n]["min"]
+            neg = d["directions"][n] == "negative"
+            if var.calibration == "breakpoints":
+                keys = ("break_0", "break_33", "break_67")
+                if n in d["reference"]:
+                    base = d["reference"][n]
+                    spread = abs(base[keys[2]] - base[keys[0]]) or span
+                else:  # no analyst breakpoints: boundaries from the quartiles, purely so the test provider can answer
+                    q1, med, q3 = stats[n]["q1"], stats[n]["median"], stats[n]["q3"]
+                    base = dict(zip(keys, (stats[n]["max"], med, q1) if neg else (stats[n]["min"], med, q3), strict=True))
+                    spread = span
+                lo_, hi_ = stats[n]["min"], stats[n]["max"]
+                b = {k: base[k] + shift * spread for k in keys}
+                b[keys[1]] = min(hi_, max(lo_, b[keys[1]]))
+                b[keys[2]] = min(hi_, max(lo_, b[keys[2]]))
+                ordered = b[keys[0]] > b[keys[1]] > b[keys[2]] if neg else b[keys[0]] < b[keys[1]] < b[keys[2]]
+                if not ordered:  # clamping collapsed the boundaries: fall back to the reference/quartile values
+                    b = {k: base[k] for k in keys}
+                if break_order and n == first_cond:
+                    b[keys[0]], b[keys[2]] = b[keys[2]], b[keys[0]]
+                vals = {k: round(b[k], 4) for k in keys}
+                why = {k: breakpoint_rationale(role, role_desc, var, k, vals[k], d["data"][n]) for k in keys}
+                return {"breakpoints": vals, "rationale": why}
             if n in d["reference"]:
                 base = d["reference"][n]
             else:  # no analyst anchors: quartiles, purely so the test provider can answer
                 lo, mid, hi = stats[n]["q1"], stats[n]["median"], stats[n]["q3"]
-                neg = d["directions"][n] == "negative"
                 base = {"full_non_membership": hi if neg else lo, "crossover": mid, "full_membership": lo if neg else hi}
             a = {k: min(stats[n]["max"], max(stats[n]["min"], base[k] + shift * span)) for k in ANCHOR_KEYS}
             if break_order and n == first_cond:
                 a["full_membership"], a["full_non_membership"] = a["full_non_membership"], a["full_membership"]
-            var = next(v for v in d["variables"] if v.name == n)
             why = {k: anchor_rationale(role, role_desc, var, k, round(a[k], 4), d["data"][n]) for k in ANCHOR_KEYS}
             return {"anchors": {k: round(a[k], 4) for k in ANCHOR_KEYS}, "rationale": why}
 
@@ -98,7 +128,7 @@ class DemoProvider(LLMProvider):
         n_cases = len(d["data"][d["outcome"]])
         k = sum(1 for v in d["variables"] if v.role == "condition")
         return {
-            "conditions": {v.name: block(v.name) for v in d["variables"] if v.role == "condition"},
+            "conditions": {v.name: block(v.name) for v in asked},
             "outcome": block(d["outcome"]),
             "truth_table": {
                 "consistency_threshold": tt["consistency_threshold"], "frequency_threshold": tt["frequency_threshold"],

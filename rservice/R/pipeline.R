@@ -10,6 +10,16 @@ suppressPackageStartupMessages({
 })
 
 ANCHOR_KEYS <- c("full_non_membership", "crossover", "full_membership")
+BREAK_KEYS <- c("break_0", "break_33", "break_67")   # boundaries between the four scores 0 | 0.33 | 0.67 | 1
+
+# How a variable is calibrated. Variables written before calibration kinds existed carry `anchors` and no
+# `calibration`, and are "direct": their results are unchanged.
+#   direct         3 anchors, logistic direct method
+#   breakpoints    3 breakpoints, indirect four-value scale (0, 0.33, 0.67, 1)
+#   precalibrated  values are already set memberships in [0, 1] and are used exactly as given
+var_kind <- function(v) if (!is.null(v$calibration$kind)) v$calibration$kind else "direct"
+var_anchors <- function(v) if (!is.null(v$calibration$anchors)) v$calibration$anchors else v$anchors
+var_breaks <- function(v) v$calibration$breakpoints
 
 check_input <- function(input) {
   stopifnot(is.list(input), !is.null(input$data), !is.null(input$conditions), !is.null(input$outcome),
@@ -18,7 +28,10 @@ check_input <- function(input) {
   missing_cols <- setdiff(vars, names(input$data))
   if (length(missing_cols) > 0) stop("data is missing columns: ", paste(missing_cols, collapse = ", "))
   for (v in c(input$conditions, list(input$outcome))) {
-    if (!all(ANCHOR_KEYS %in% names(v$anchors))) stop("anchors incomplete for ", v$name)
+    kind <- var_kind(v)
+    if (!kind %in% c("direct", "breakpoints", "precalibrated")) stop("unknown calibration kind for ", v$name, ": ", kind)
+    if (kind == "direct" && !all(ANCHOR_KEYS %in% names(var_anchors(v)))) stop("anchors incomplete for ", v$name)
+    if (kind == "breakpoints" && !all(BREAK_KEYS %in% names(var_breaks(v)))) stop("breakpoints incomplete for ", v$name)
   }
   invisible(TRUE)
 }
@@ -28,6 +41,33 @@ check_input <- function(input) {
 calibrate_variable <- function(x, anchors) {
   th <- c(e = anchors$full_non_membership, c = anchors$crossover, i = anchors$full_membership)
   as.numeric(unclass(QCA::calibrate(x, type = "fuzzy", thresholds = th, logistic = TRUE, idm = 0.95)))
+}
+
+# Indirect four-value calibration. For a positive orientation (increasing breakpoints) a value at or below break_0
+# scores 0, at or below break_33 scores 0.33, at or below break_67 scores 0.67, and above that scores 1. For a
+# negative orientation (decreasing breakpoints) the comparisons are mirrored. A value exactly on a boundary takes
+# the LOWER of the two scores in both orientations.
+calibrate_breakpoints <- function(x, breaks) {
+  b <- c(breaks$break_0, breaks$break_33, breaks$break_67)
+  if (!is.numeric(b) || anyNA(b) || !all(is.finite(b))) stop("breakpoints must be finite numbers")
+  inc <- all(diff(b) > 0); dec <- all(diff(b) < 0)
+  if (!inc && !dec) stop("breakpoints must be strictly increasing or strictly decreasing")
+  lvl <- c(0, 0.33, 0.67, 1)
+  if (inc) ifelse(x <= b[1], lvl[1], ifelse(x <= b[2], lvl[2], ifelse(x <= b[3], lvl[3], lvl[4])))
+  else     ifelse(x >= b[1], lvl[1], ifelse(x >= b[2], lvl[2], ifelse(x >= b[3], lvl[3], lvl[4])))
+}
+
+# Pass-through: the values already are set memberships and are used exactly as given.
+passthrough_variable <- function(x, name) {
+  if (anyNA(x) || any(!is.finite(x)) || any(x < 0) || any(x > 1)) stop("already-calibrated variable ", name, " must contain memberships in [0, 1]")
+  as.numeric(x)
+}
+
+calibrate_by_kind <- function(x, v) {
+  switch(var_kind(v),
+    direct = calibrate_variable(x, var_anchors(v)),
+    breakpoints = calibrate_breakpoints(x, var_breaks(v)),
+    precalibrated = passthrough_variable(x, v$name))
 }
 
 # Canonical representation of a solution term: sorted signed literals, e.g. "+A", "-B".
@@ -82,9 +122,9 @@ run_pipeline <- function(input) {
     out_name <- input$outcome$name
 
     cal <- data.frame(lapply(setNames(cond_names, cond_names),
-      function(n) calibrate_variable(as.numeric(input$data[[n]]),
-        input$conditions[[match(n, cond_names)]]$anchors)), check.names = FALSE)
-    cal[[out_name]] <- calibrate_variable(as.numeric(input$data[[out_name]]), input$outcome$anchors)
+      function(n) calibrate_by_kind(as.numeric(input$data[[n]]), input$conditions[[match(n, cond_names)]])),
+      check.names = FALSE)
+    cal[[out_name]] <- calibrate_by_kind(as.numeric(input$data[[out_name]]), input$outcome)
     result$calibrated <- as.list(cal)
 
     tt_args <- input$truth_table

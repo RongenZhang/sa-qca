@@ -168,3 +168,72 @@ def test_scripted_rationales_are_substantive_and_use_the_conditions_own_words():
     assert "managerial trust in the technology vendor" in trust and "7-point Likert" in trust
     tt = dec["truth_table"]
     assert "60 cases and 3 conditions" in tt["frequency_rationale"] and len(tt["consistency_rationale"].split()) > 40
+
+
+def _kinds_vars():
+    from app.domain.prompt import VariableSpec
+    from app.domain.stats import describe
+
+    def v(name, role, kind, vals, direction="positive"):
+        return VariableSpec(name, role, direction, f"{name} construct", f"{name} how measured", "", describe(vals), kind)
+
+    return [v("A", "condition", "precalibrated", [0, 0.33, 0.67, 1, 0.67]), v("B", "condition", "direct", [1, 2, 3, 4, 5, 6, 7]),
+            v("Y", "outcome", "breakpoints", [4, 7, 15, 40, 72, 90, 101, 1913])]
+
+
+def test_v3_prompt_marks_fixed_sets_and_names_the_two_ways_to_calibrate():
+    p = render_prompt(load_default_template(), _kinds_vars(), "cases", RoleSpec("R", "d"))
+    assert "FIXED: this set is already calibrated" in p and "you must NOT calibrate it" in p
+    assert "YOU CALIBRATE THIS SET WITH BREAKPOINTS" in p and "YOU CALIBRATE THIS SET WITH THREE ANCHORS" in p
+    assert "break_33" in p and "LOWER of the two scores" in p
+    # the schema in the prompt omits the fixed condition and asks breakpoints for the outcome
+    schema = p[p.index("{\n  \"$schema\""):]
+    assert '"A"' not in schema.split('"required"')[2] and '"break_0"' in schema
+    # the fixed set shows its membership distribution but no raw histogram
+    a_block = p[p.index("### A:"):p.index("### B:")]
+    assert "Histogram" not in a_block and "Distribution of the membership scores" in a_block
+
+
+def test_schema_rejects_asking_for_a_fixed_outcome():
+    import pytest
+
+    from app.domain.schema import build_decision_schema
+
+    with pytest.raises(ValueError):
+        build_decision_schema([("A", "direct")], "precalibrated")
+
+
+def test_all_earlier_template_versions_still_load():
+    from app.domain.prompt import load_template
+
+    for v in ("default_v1", "default_v2", "default_v3"):
+        assert load_template(v)
+
+
+def test_skaaning_with_breakpoint_outcome_and_only_fixed_conditions_perturbs_the_outcome():
+    from app.domain.mechanical import SkaaningParams, generate_skaaning_configs
+
+    counts = [4, 6, 7, 15, 27, 40, 47, 51, 72, 77, 87, 100, 157, 1913]
+    ref = {"Y": {"break_0": 0, "break_33": 15, "break_67": 90}}  # no calibrated conditions at all
+    cfgs = generate_skaaning_configs({"Y": [float(c) for c in counts]}, ref, {"Y": "positive"}, "Y",
+                                     {"consistency_threshold": 0.8, "frequency_threshold": 1, "pri_threshold": 0.75},
+                                     SkaaningParams(perturb_outcome=True), kinds={"Y": "breakpoints"})
+    fact = [c for c in cfgs if c.perturbation["kind"] == "skaaning_factorial"]
+    assert len(fact) == 2  # outcome lower and higher; no conditions to cross
+    hi = next(c for c in fact if c.perturbation["outcome_level"] == 1)
+    assert hi.decision["conditions"] == {}
+    b = hi.decision["outcome"]["breakpoints"]
+    assert b == {"break_0": 4.5, "break_33": 19.5, "break_67": 94.5}  # 5% of the 90-wide reference spread, not of the 1909 range
+    assert set(hi.decision["outcome"]["rationale"]) == {"break_0", "break_33", "break_67"}
+    assert "anchors" not in hi.decision["outcome"]
+
+
+def test_skaaning_default_leaves_the_outcome_alone_when_there_are_calibrated_conditions():
+    from app.domain.mechanical import generate_skaaning_configs
+
+    data = {"X": [float(i) for i in range(1, 101)], "Y": [float(i) for i in range(1, 101)]}
+    ref = {"X": {"full_non_membership": 20, "crossover": 50, "full_membership": 80}, "Y": {"break_0": 0, "break_33": 25, "break_67": 75}}
+    cfgs = generate_skaaning_configs(data, ref, {"X": "positive", "Y": "positive"}, "Y",
+                                     {"consistency_threshold": 0.8, "frequency_threshold": 1}, kinds={"Y": "breakpoints"})
+    fact = [c for c in cfgs if c.perturbation["kind"] == "skaaning_factorial"]
+    assert len(fact) == 2 and all(c.decision["outcome"]["breakpoints"] == ref["Y"] for c in fact)

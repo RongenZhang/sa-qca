@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app import config, rclient
 from app.db.models import Base, CallLog, Judgment, RoleApproval, RResult, Run, RunConfig
 from app.demo import DemoProvider
-from app.domain.mechanical import MechanicalConfig, generate_skaaning_configs
+from app.domain.mechanical import MechanicalConfig, SkaaningParams, generate_skaaning_configs
 from app.domain.prompt import DEFAULT_TEMPLATE_VERSION, RoleSpec, load_default_template, prompt_hash
 from app.engine.report import validation_report
 from app.engine.rinput import build_r_input
@@ -29,6 +29,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
 BATCHES: dict[int, dict[str, Any]] = {}  # run_config_id -> {"state", "cancel"}
+VERIFY_JOBS: dict[int, dict[str, Any]] = {}  # run_config_id -> background verification state (cleared when a run is created or purged)
 
 
 def init_db(url: str | None = None) -> None:
@@ -153,8 +154,7 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
     if req.get("price_in") is not None and req.get("price_out") is not None:
         prices = {req["model"]: (float(req["price_in"]), float(req["price_out"]))}
     sampling = {"temperature": req["temperature"]} if req.get("temperature") is not None else {}
-    mech = generate_skaaning_configs(demo["data"], demo["reference"], demo["directions"], demo["outcome"],
-                                     demo["reference_cutoffs"]) if arms.get("mechanical") else []
+    mech = mechanical_configs(demo) if arms.get("mechanical") else []
     ref_cfg = (MechanicalConfig("analyst_reference", "analyst's original specification", _reference_decision(demo), source="analyst")
                if demo["has_reference"] else None)
     snapshot = project_summary(demo)
@@ -178,6 +178,7 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
         s.commit()
         cfg_id = cfg.id
     BATCHES[cfg_id] = {"state": "running", "cancel": False, "owner": sid}
+    VERIFY_JOBS.pop(cfg_id, None)  # a reused run number must never show an earlier run's verification
 
     def work() -> None:
         with session() as s:
@@ -186,7 +187,8 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
             ctx = EngineContext(
                 provider, req["model"], sampling, template, demo["variables"], demo["project"]["case_description"],
                 float(req.get("tolerance", 0.0)), r_pipeline,
-                lambda d: build_r_input(d, demo["data"], demo["directions"], demo["dir_exp"], demo["outcome"]),
+                lambda d: build_r_input(d, demo["data"], demo["directions"], demo["dir_exp"], demo["outcome"],
+                                        demo["kinds"], demo["condition_order"]),
                 CostModel(prices), req.get("spend_cap"),
             )
             try:
@@ -202,18 +204,32 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
 
 
 def _reference_decision(demo: dict[str, Any]) -> dict[str, Any]:
-    keys = ("full_non_membership", "crossover", "full_membership")
-
     def block(n: str) -> dict[str, Any]:
-        return {"anchors": dict(demo["reference"][n]), "rationale": {k: "analyst's original specification" for k in keys}}
+        values = dict(demo["reference"][n])
+        field = "breakpoints" if demo["kinds"].get(n) == "breakpoints" else "anchors"
+        return {field: values, "rationale": {k: "analyst's original specification" for k in values}}
 
     tt = demo["reference_cutoffs"]
-    return {"conditions": {v.name: block(v.name) for v in demo["variables"] if v.role == "condition"},
+    return {"conditions": {v.name: block(v.name) for v in demo["variables"]
+                           if v.role == "condition" and v.calibration != "precalibrated"},
             "outcome": block(demo["outcome"]),
             "truth_table": {"consistency_threshold": tt["consistency_threshold"], "frequency_threshold": tt["frequency_threshold"],
                             "pri_threshold": tt.get("pri_threshold"), "consistency_rationale": "analyst's original cutoff",
                             "frequency_rationale": "analyst's original cutoff",
                             "pri_rationale": "analyst's original cutoff" if tt.get("pri_threshold") is not None else None}}
+
+
+def mechanical_configs(project: dict[str, Any]) -> list[MechanicalConfig]:
+    """The mechanical (Skaaning-style) perturbations of the analyst's own specification. When every condition is already
+    calibrated, only the outcome can be perturbed, so it is."""
+    calibrated = [v for v in project["variables"] if v.role == "condition" and v.calibration != "precalibrated"]
+    return generate_skaaning_configs(project["data"], project["reference"], project["directions"], project["outcome"],
+                                     project["reference_cutoffs"], SkaaningParams(perturb_outcome=not calibrated), project["kinds"])
+
+
+def _values(block: dict[str, Any]) -> dict[str, float]:
+    """The numbers an agent (or the analyst) chose for one variable: anchors or breakpoints."""
+    return block["anchors"] if "anchors" in block else block["breakpoints"]  # type: ignore[no-any-return]
 
 
 def cancel_run(cfg_id: int) -> None:
@@ -252,7 +268,7 @@ def results(cfg_id: int) -> dict[str, Any]:
             sols = (rr.r_output.get("solutions") or {}) if rr else {}
             out.append({
                 "run_id": r.id, "arm": r.arm, "rep": r.rep_index, "status": r.status, "mechanical_id": r.mechanical_id,
-                "attempts": len(r.attempts), "anchors": {n: b["anchors"] for n, b in
+                "attempts": len(r.attempts), "anchors": {n: _values(b) for n, b in
                                                           {**(j.decision["conditions"]), "outcome": j.decision["outcome"]}.items()} if j else None,
                 "solutions": {k: _models(sols.get(k)) for k in ("complex", "parsimonious", "intermediate")} if rr else None,
             })
@@ -289,7 +305,7 @@ def rationales(cfg_id: int, arm: str | None = None, variable: str | None = None)
                     continue
                 for k, why in b["rationale"].items():
                     out.append({"run_id": r.id, "arm": r.arm, "rep": r.rep_index, "variable": name, "anchor": k,
-                                "value": b["anchors"][k], "rationale": why, "source": j.source, "attempt_id": j.attempt_id})
+                                "value": _values(b)[k], "rationale": why, "source": j.source, "attempt_id": j.attempt_id})
     return out
 
 
@@ -345,6 +361,7 @@ def purge_old(hours: int) -> int:
                 s.query(Run).filter(Run.id.in_(run_ids)).delete(synchronize_session=False)
             s.delete(cfg)
             BATCHES.pop(cfg.id, None)
+            VERIFY_JOBS.pop(cfg.id, None)
             n += 1
         s.query(RoleApproval).filter(RoleApproval.approved_at < cutoff).delete(synchronize_session=False)
         s.commit()
