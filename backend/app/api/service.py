@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import threading
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -177,7 +178,8 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
         s.add(cfg)
         s.commit()
         cfg_id = cfg.id
-    BATCHES[cfg_id] = {"state": "running", "cancel": False, "owner": sid}
+    token = uuid.uuid4().hex  # identifies THIS batch: a stale worker for an earlier batch must not touch its state
+    BATCHES[cfg_id] = {"state": "running", "cancel": False, "owner": sid, "token": token}
     VERIFY_JOBS.pop(cfg_id, None)  # a reused run number must never show an earlier run's verification
 
     def work() -> None:
@@ -193,10 +195,10 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
             )
             try:
                 state = run_batch(s, ctx, c, roles, bool(arms.get("generic")), mech,
-                                  lambda: bool(BATCHES.get(cfg_id, {}).get("cancel")), ref_cfg)
+                                  lambda: BATCHES.get(cfg_id, {}).get("token") == token and bool(BATCHES[cfg_id]["cancel"]), ref_cfg)
             except Exception as e:  # surface unexpected failures instead of hanging the UI
                 state = f"error: {e}"
-            if cfg_id in BATCHES:
+            if BATCHES.get(cfg_id, {}).get("token") == token:
                 BATCHES[cfg_id]["state"] = state
 
     threading.Thread(target=work, daemon=True).start()
