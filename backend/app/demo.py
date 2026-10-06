@@ -138,3 +138,17 @@ class DemoProvider(LLMProvider):
                 "pri_rationale": pri_rationale(tt["pri_threshold"]) if tt.get("pri_threshold") is not None else None,
             },
         }
+
+
+def demo_study() -> dict[str, Any]:
+    """The demo project written as a study plan, so the same steps work on it."""
+    d = load_demo()
+    conds = [v for v in d["variables"] if v.role == "condition"]
+    out = next(v for v in d["variables"] if v.role == "outcome")
+    return {
+        "phenomenon": d["project"]["case_description"],
+        "outcome": {"name": out.name, "description": out.construct_definition, "how_to_measure": out.instrument},
+        "stakeholders": [{**r, "ai": False} for r in SUGGESTED_ROLES],
+        "conditions": [{"name": v.name, "definition": v.construct_definition, "how_to_measure": v.instrument,
+                        "calibration": v.calibration, "direction": v.direction, "ai": False} for v in conds],
+    }

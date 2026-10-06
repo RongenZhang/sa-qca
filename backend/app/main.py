@@ -12,7 +12,7 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from app import config
+from app import assist, config
 from app.api import service
 from app.demo import SUGGESTED_ROLES
 from app.domain.prompt import (
@@ -24,7 +24,19 @@ from app.domain.prompt import (
     render_prompt,
 )
 from app.domain.schema import build_decision_schema
-from app.projects import ProjectError, configure, create_upload, get_project, get_setup, project_summary
+from app.projects import (
+    ProjectError,
+    attach_dataset,
+    configure,
+    create_draft,
+    create_upload,
+    get_project,
+    get_setup,
+    get_study,
+    list_studies,
+    project_summary,
+    save_study,
+)
 
 app = FastAPI(title="SA-QCA backend")
 SID_RE = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
@@ -150,6 +162,55 @@ async def upload(file: UploadFile = File(...), _: None = Depends(not_on_demo)) -
         raise HTTPException(400, str(e)) from e
 
 
+class StudyIn(BaseModel):
+    name: str | None = None
+    study: dict[str, Any]
+
+
+@app.get("/api/studies")
+def studies() -> list[dict[str, Any]]:
+    if config.demo_only():
+        return []
+    with service.session() as s:
+        return list_studies(s)
+
+
+@app.post("/api/studies")
+def new_study(body: dict[str, Any], _: None = Depends(not_on_demo)) -> dict[str, Any]:
+    """Starts a study from the researcher's own question; data are attached later."""
+    with service.session() as s:
+        return {"project_id": create_draft(s, str(body.get("name", "")))}
+
+
+@app.get("/api/projects/{pid}/study")
+def study(pid: str) -> dict[str, Any]:
+    if config.demo_only() and pid != "demo":
+        raise HTTPException(403, "only the demo study is available on this public demo")
+    try:
+        with service.session() as s:
+            return get_study(s, pid)
+    except ProjectError as e:
+        raise HTTPException(404 if "unknown" in str(e) else 400, str(e)) from e
+
+
+@app.put("/api/projects/{pid}/study")
+def update_study(pid: str, body: StudyIn, _: None = Depends(not_on_demo)) -> dict[str, Any]:
+    try:
+        with service.session() as s:
+            return save_study(s, pid, body.study, body.name)
+    except ProjectError as e:
+        raise HTTPException(404 if "unknown" in str(e) else 400, str(e)) from e
+
+
+@app.post("/api/projects/{pid}/dataset")
+async def project_dataset(pid: str, file: UploadFile = File(...), _: None = Depends(not_on_demo)) -> dict[str, Any]:
+    try:
+        with service.session() as s:
+            return attach_dataset(s, pid, file.filename or "upload", await file.read())
+    except ProjectError as e:
+        raise HTTPException(404 if "unknown" in str(e) else 400, str(e)) from e
+
+
 @app.get("/api/projects/{pid}/setup")
 def project_setup(pid: str, _: None = Depends(not_on_demo)) -> dict[str, Any]:
     try:
@@ -267,6 +328,53 @@ def run_results(cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
         return service.results(cfg_id)
     except KeyError as e:
         raise HTTPException(404, "unknown run") from e
+
+
+class AssistIn(BaseModel):
+    project_id: str | None = None
+    inputs: dict[str, Any]
+    provider: str = "scripted"
+    model: str = "claude-opus-5-5"
+    temperature: float | None = None
+
+
+def _assist_inputs(kind: str, body: AssistIn) -> dict[str, Any]:
+    inputs = dict(body.inputs)
+    if body.project_id == "demo":
+        inputs["demo"] = True
+    elif config.demo_only():
+        raise HTTPException(403, "only the demo study is available on this public demo")
+    if kind not in assist.KINDS:
+        raise HTTPException(404, f"unknown helper {kind!r}")
+    try:
+        assist.check_inputs(kind, inputs)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    return inputs
+
+
+@app.post("/api/assist/{kind}/preview")
+def assist_preview(kind: str, body: AssistIn) -> dict[str, Any]:
+    """Shows exactly what would be sent to a model before anything is sent."""
+    inputs = _assist_inputs(kind, body)
+    scripted = config.demo_only() or body.provider in ("scripted", "demo-mock", "")
+    return {"prompt": None if scripted else assist.build_prompt(kind, inputs), "scripted": scripted,
+            "sent": "only the text you wrote above; never your data rows" if not scripted else "nothing: scripted suggestions are produced locally"}
+
+
+@app.post("/api/assist/{kind}")
+def assist_run(kind: str, body: AssistIn, x_provider_key: str | None = Header(default=None),
+               x_provider_workspace: str | None = Header(default=None)) -> dict[str, Any]:
+    inputs = _assist_inputs(kind, body)
+    try:
+        provider = service.make_helper_provider(body.provider, x_provider_key, x_provider_workspace)
+        sampling = {"temperature": body.temperature} if body.temperature is not None else {}
+        with service.session() as s:
+            return assist.run_helper(s, kind, inputs, provider, body.model, sampling, body.project_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except assist.HelperError as e:
+        raise HTTPException(502, str(e)) from e
 
 
 @app.get("/api/similarity/metrics")

@@ -17,7 +17,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db.models import CallLog, Judgment, RResult, Run, RunConfig
+from app.db.models import CallLog, HelperCall, Judgment, RResult, Run, RunConfig
 from app.domain.prompt import load_template, prompt_hash
 from app.engine.report import validation_report
 
@@ -84,6 +84,14 @@ def build_files(session: Session, cfg_id: int) -> dict[str, bytes]:
 
         snap = {**project_summary(get_project(session, cfg.project_id)), "reconstructed_from_current_project": True}
     files["project/project.json"] = _j(snap)
+    if snap.get("study"):
+        files["study/study.json"] = _j(snap["study"])  # phenomenon, outcome, stakeholders and conditions as planned
+    helper = (session.query(HelperCall).filter(HelperCall.project_id == cfg.project_id, HelperCall.created_at <= cfg.created_at)
+              .order_by(HelperCall.id).all())
+    files["assist/helper_calls.jsonl"] = ("\n".join(json.dumps({
+        "id": h.id, "kind": h.kind, "provider": h.provider, "model_id": h.model_id, "attempt_kind": h.attempt_kind, "created_at": h.created_at.isoformat(),
+        "prompt": h.prompt, "raw_response": h.raw_response, "validation_ok": h.validation_ok, "validation_errors": h.validation_errors}, ensure_ascii=False)
+        for h in helper) + ("\n" if helper else "")).encode()
     files["roles/approved_roles.json"] = _j({"approval": cfg.role_approval, "roles_used": cfg.roles})
     template = load_template(cfg.template_version)  # the exact template this run used
     files[f"prompts/template_{cfg.template_version}.j2"] = template.encode()
@@ -159,7 +167,7 @@ Run #{cfg.id} · {cfg.provider}/{cfg.model} · prompt template {cfg.template_ver
 
 ## What is inside
 - `data/` the analysis dataset exactly as sent to R (selected variables, after any listwise deletion the analyst chose)
-- `project/project.json` the project as it stood when the run started: phenomenon description, variable definitions, instruments, original anchors and cutoffs
+- `project/project.json` the project as it stood when the run started: phenomenon description, variable definitions, instruments, original anchors and cutoffs; `study/study.json` the plan (phenomenon, outcome, stakeholders, conditions) and `assist/helper_calls.jsonl` every AI-assisted or scripted planning call that led to it, with its prompt and raw answer
 - `roles/approved_roles.json` the approved stakeholder roles and who approved them, when
 - `prompts/` the prompt template and **every rendered prompt** (one file per attempt)
 - `llm/attempts.jsonl` every attempt with the raw model response, model ID, sampling parameters, token use and validation result; `llm/call_log.json` rate-limit and provider events

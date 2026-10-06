@@ -19,6 +19,7 @@ pytestmark = pytest.mark.skipif(shutil.which("Rscript") is None, reason="Rscript
 def built(tmp_path_factory):
     service.init_db(f"sqlite:///{tmp_path_factory.mktemp('db')}/t.sqlite")
     c = TestClient(app, headers={"X-Session": "test-visitor-0001"})
+    c.post("/api/assist/stakeholders", json={"project_id": "demo", "inputs": {"phenomenon": "Small firms adopting a vendor system over eighteen months."}})
     ok = c.post("/api/roles/approve", json={"roles": [{"name": "Vendor account manager", "description": "sells"}], "approved_by": "t"}).json()
     rid = c.post("/api/runs", json={"role_set_hash": ok["roles_hash"], "reps": 3,
                                     "arms": {"roles": ["Vendor account manager"], "generic": True, "mechanical": False}}).json()["run_config_id"]
@@ -53,6 +54,22 @@ def test_bundle_contents_and_manifest(built):
     assert decisions and all(json.loads(zf.read(p))["decision"]["outcome"] for p in decisions)
     assert json.loads(zf.read("roles/approved_roles.json"))["approval"]["approved_by"] == "t"
     assert json.loads(zf.read("project/project.json"))["case_description"]
+
+
+def test_bundle_carries_the_study_plan_and_every_planning_call(built):
+    _, _, z = built
+    zf = zipfile.ZipFile(io.BytesIO(z))
+    plan = json.loads(zf.read("study/study.json"))
+    assert plan["outcome"]["name"] == "ADOPTION" and [c["name"] for c in plan["conditions"]] == ["TRUST", "SUPPORT", "RESOURCES"]
+    calls = [json.loads(line) for line in zf.read("assist/helper_calls.jsonl").decode().splitlines()]
+    assert calls and calls[0]["kind"] == "stakeholders" and calls[0]["provider"] == "scripted"
+
+
+def test_report_shows_the_plan_and_names_planning_help_only_when_a_model_gave_it(built):
+    c, rid, _ = built
+    t = c.get(f"/api/runs/{rid}/report").text
+    assert "Study plan" in t and "Planned condition" in t and "Small-firm owner-manager" in t
+    assert "also asked to propose" not in t  # the only planning call was scripted, so no model is claimed
 
 
 def test_no_credentials_anywhere(built):
