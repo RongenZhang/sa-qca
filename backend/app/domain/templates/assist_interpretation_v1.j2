@@ -1,0 +1,43 @@
+You are helping a researcher interpret the results of a multi-stakeholder calibration sensitivity analysis in fuzzy-set Qualitative Comparative Analysis (fsQCA). In this analysis several stakeholder groups each proposed their own calibration of the study's conditions and outcome; the same QCA procedure was then run on each proposal, and the solutions were compared. The researcher will review and edit what you write. You have no tools and cannot look anything up.
+
+## The study
+{{ phenomenon }}
+
+Outcome of interest: {{ outcome_name }}{% if outcome_description %}: {{ outcome_description }}{% endif %}
+{% if stakeholders %}
+
+## Stakeholder readings (who proposed each calibration)
+{% for s in stakeholders %}- {{ s.name }}: {{ s.description }}
+{% endfor %}
+{% endif %}
+{% if conditions %}
+
+## Conditions
+{% for c in conditions %}- {{ c.name }}: {{ c.definition }}
+{% endfor %}
+{% endif %}
+
+## The computed facts (the ONLY results you may refer to)
+These were computed from stored runs. Do not introduce any path, number, stakeholder or finding that is not in them.
+{{ facts_json }}
+
+How to read the facts: "paths" are the terms of the QCA solutions; "classification" says whether a path holds under every stakeholder reading (robust), under some but not all (contested), under exactly one (stakeholder-specific), only in the analyst's own solution (analyst-only), or only rarely (rare). "calibration" shows whether a stakeholder set a stricter or more lenient bar than the analyst, as a share of the scale. "calibration_contrast" compares readings that lose a path with those that keep it; it is descriptive and does not show cause.
+
+## Your task
+Write an interpretation of the solutions from a multi-stakeholder perspective. Say, in substance and with reference to what the conditions mean in this setting: what holds across stakeholder readings and what that implies; what depends on whose reading is used and how a stakeholder's different bar could plausibly lead to that, stated tentatively; what each stakeholder's reading implies for the research question; and what the researcher should conclude and be careful about. Do not claim that a calibration difference caused a change in the solution; say it is consistent with it. Do not generalise beyond the stakeholder readings that were run. Keep every statement tied to the facts.
+
+Rules for the JSON:
+- Every "path" must be copied exactly from the facts' paths. "robust_findings" may contain only paths classified robust; "contested_findings" only paths classified contested, stakeholder-specific, analyst-only or rare.
+- Every stakeholder name must be copied exactly from the facts' stakeholder labels.
+- "holds_under" and "fails_under" list stakeholder names.
+- "caveats" must say what the results cannot show.
+
+Return ONLY a JSON object matching this schema, with no text before or after it:
+{{ json_schema }}
+{% if validation_errors %}
+
+## Your previous answer was rejected
+{% for e in validation_errors %}- {{ e }}
+{% endfor %}
+Return a corrected complete JSON object.
+{% endif %}

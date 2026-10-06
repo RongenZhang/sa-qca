@@ -74,11 +74,17 @@ def ai_use_statement(cfg: RunConfig, runs: list[Run], attempts: list[RunAttempt]
     gen = f" and {cfg.reps} repetitions of a role-free generic prompt" if "generic" in (cfg.arms or []) else ""
     model_help = [x for x in (helper or []) if x.provider != "scripted" and x.attempt_kind and x.validation_ok]
     planning = ""
-    if model_help:
-        kinds = ", ".join(sorted({x.kind for x in model_help}))
-        ms = ", ".join(sorted({x.model_id for x in model_help if x.model_id}))
+    plan_help = [x for x in model_help if x.kind != "interpretation"]
+    interp_help = [x for x in model_help if x.kind == "interpretation"]
+    if plan_help:
+        kinds = ", ".join(sorted({x.kind for x in plan_help}))
+        ms = ", ".join(sorted({x.model_id for x in plan_help if x.model_id}))
         planning = (f" Before the analysis, the same model family ({ms}) was also asked to propose {kinds} for the study from the researcher's own written description "
-                    f"({len(model_help)} accepted answers; prompts and raw answers are archived); the researcher reviewed, edited and approved everything that was used, and no data were sent.")
+                    f"({len(plan_help)} accepted answers; prompts and raw answers are archived); the researcher reviewed, edited and approved everything that was used, and no data were sent.")
+    if interp_help:
+        ms = ", ".join(sorted({x.model_id for x in interp_help if x.model_id}))
+        planning += (f" After the analysis, a model ({ms}) was asked to draft an interpretation of the computed solutions ({len(interp_help)} accepted answer{'s' if len(interp_help) != 1 else ''}); "
+                     "it saw only the researcher's text and the computed facts, its answer was checked against those facts, and the researcher reviewed and edited it.")
     return (f"Generative AI was used in this study as a research instrument, not to analyse the data or to write the text.{planning} "
             f"The language model {', '.join(models)} ({cfg.provider}) was called through its API {when} to propose calibration anchors and "
             f"truth-table cutoffs, each with a written rationale. The design comprised {arms}{gen}. Each prompt contained the description of the "
@@ -90,6 +96,20 @@ def ai_use_statement(cfg: RunConfig, runs: list[Run], attempts: list[RunAttempt]
             f"and not analysed: {rate}. Model output was never edited. Calibration, truth-table construction, necessity analysis and minimisation "
             f"were carried out by identical R code ({env.get('R') or 'R version in bundle'}, QCA {env.get('QCA') or 'version in bundle'}) that received "
             f"the anchors and cutoffs as arguments. Prompts, raw responses, decisions and a replication script are archived in the replication bundle.")
+
+
+def _narrative_html(n: dict[str, Any]) -> str:
+    out = [f"<p><b>{E(n['headline'])}</b></p>"]
+    if n["robust_findings"]:
+        out.append("<h3>What holds under every stakeholder reading</h3><ul>" + "".join(f"<li><b>{E(f['path'])}</b>: {E(f['meaning'])}</li>" for f in n["robust_findings"]) + "</ul>")
+    if n["contested_findings"]:
+        out.append("<h3>What depends on whose reading is used</h3><ul>" + "".join(
+            f"<li><b>{E(f['path'])}</b> (holds under: {E(', '.join(f['holds_under']) or 'none')}; fails under: {E(', '.join(f['fails_under']) or 'none')}). {E(f['meaning'])}</li>"
+            for f in n["contested_findings"]) + "</ul>")
+    out.append("<h3>Stakeholder by stakeholder</h3><ul>" + "".join(
+        f"<li><b>{E(p['stakeholder'])}</b>: {E(p['reading'])} <i>{E(p['implication'])}</i></li>" for p in n["stakeholder_perspectives"]) + "</ul>")
+    out.append(f"<h3>Implications</h3><p>{E(n['implications'])}</p><h3>Caveats</h3><ul>" + "".join(f"<li>{E(c)}</li>" for c in n["caveats"]) + "</ul>")
+    return "".join(out)
 
 
 def build_report(session: Session, cfg_id: int) -> str:
@@ -106,7 +126,12 @@ def build_report(session: Session, cfg_id: int) -> str:
     outs = [r.judgment.r_result.r_output for r in runs if r.judgment and r.judgment.r_result]
     v: dict[str, Any] = next((o["versions"] for o in outs if o.get("versions")), {})
     d = build_dashboard(res, "parsimonious")
-    helper = [h for h in session.query(HelperCall).filter(HelperCall.project_id == cfg.project_id, HelperCall.created_at <= cfg.created_at).all()]
+    helper = list(session.query(HelperCall).filter((HelperCall.project_id == cfg.project_id) & (HelperCall.created_at <= cfg.created_at) | (HelperCall.run_config_id == cfg.id)).all())
+    from app.engine.interpret import build_facts, template_narrative
+
+    saved = cfg.interpretation or {}
+    facts = build_facts(res, saved.get("kind", "parsimonious"), saved.get("policy", "union"))
+    narrative = saved.get("narrative") or template_narrative(facts)
 
     h = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>SA-QCA report, run {cfg_id}</title><style>"
          "body{font:15px/1.5 system-ui,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;color:#1d2329}"
@@ -182,7 +207,14 @@ def build_report(session: Session, cfg_id: int) -> str:
                       "–" if r["first_attempt_failure_rate"] is None else f"{r['first_attempt_failure_rate'] * 100:.0f}%",
                       ", ".join(f"{k}: {n}" for k, n in r["status_counts"].items()), ", ".join(f"{k}: {n}" for k, n in r["failure_reasons"].items()) or "–"]
                      for a, r in res["report"].items()]))
-    h.append("<h2>6. AI-use statement (draft, review and edit before use)</h2>")
+    h.append("<h2>6. Interpretation from the stakeholder perspectives</h2>")
+    src = {"rules": "Written by fixed rules from the computed facts.", "ai": "Drafted by a language model from the computed facts, then reviewed by the researcher.",
+           "edited": "Drafted from the computed facts and edited by the researcher."}.get(saved.get("source", "rules"), "")
+    h.append(f"<p class='note'>{E(src)} Solution type: {E(saved.get('kind', 'parsimonious'))}. Every statement below rests on the stored runs.</p>")
+    h.append(_narrative_html(narrative))
+    if saved.get("notes"):
+        h.append(f"<h3>The researcher's notes</h3><p>{E(saved['notes'])}</p>")
+    h.append("<h2>7. AI-use statement (draft, review and edit before use)</h2>")
     if cfg.provider == "demo-mock":
         h.append("<p class='note' style='border-color:#D55E00'><b>Do not use this statement.</b> This run used scripted test responses, not a language model; "
                  "the text below is only an illustration of what the statement will say for a real run.</p>")

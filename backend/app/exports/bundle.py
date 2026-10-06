@@ -86,8 +86,17 @@ def build_files(session: Session, cfg_id: int) -> dict[str, bytes]:
     files["project/project.json"] = _j(snap)
     if snap.get("study"):
         files["study/study.json"] = _j(snap["study"])  # phenomenon, outcome, stakeholders and conditions as planned
-    helper = (session.query(HelperCall).filter(HelperCall.project_id == cfg.project_id, HelperCall.created_at <= cfg.created_at)
-              .order_by(HelperCall.id).all())
+    from app.api import service
+    from app.engine.interpret import build_facts, template_narrative
+
+    saved = cfg.interpretation or {}
+    ikind, ipolicy = saved.get("kind", "parsimonious"), saved.get("policy", "union")
+    facts = build_facts(service.results(cfg_id), ikind, ipolicy)
+    files["interpretation/interpretation.json"] = _j({"kind": ikind, "model_policy": ipolicy, "source": saved.get("source", "rules"),
+                                                      "saved_by_researcher": bool(saved), "narrative": saved.get("narrative") or template_narrative(facts),
+                                                      "notes": saved.get("notes", ""), "facts": facts})
+    helper = (session.query(HelperCall).filter((HelperCall.project_id == cfg.project_id) & (HelperCall.created_at <= cfg.created_at)
+                                               | (HelperCall.run_config_id == cfg.id)).order_by(HelperCall.id).all())
     files["assist/helper_calls.jsonl"] = ("\n".join(json.dumps({
         "id": h.id, "kind": h.kind, "provider": h.provider, "model_id": h.model_id, "attempt_kind": h.attempt_kind, "created_at": h.created_at.isoformat(),
         "prompt": h.prompt, "raw_response": h.raw_response, "validation_ok": h.validation_ok, "validation_errors": h.validation_errors}, ensure_ascii=False)
@@ -167,7 +176,7 @@ Run #{cfg.id} · {cfg.provider}/{cfg.model} · prompt template {cfg.template_ver
 
 ## What is inside
 - `data/` the analysis dataset exactly as sent to R (selected variables, after any listwise deletion the analyst chose)
-- `project/project.json` the project as it stood when the run started: phenomenon description, variable definitions, instruments, original anchors and cutoffs; `study/study.json` the plan (phenomenon, outcome, stakeholders, conditions) and `assist/helper_calls.jsonl` every AI-assisted or scripted planning call that led to it, with its prompt and raw answer
+- `project/project.json` the project as it stood when the run started: phenomenon description, variable definitions, instruments, original anchors and cutoffs; `study/study.json` the plan (phenomenon, outcome, stakeholders, conditions); `interpretation/interpretation.json` the computed facts and the interpretation of the solutions from the stakeholder perspectives (rule-based, model-drafted or researcher-edited, as saved); and `assist/helper_calls.jsonl` every AI-assisted or scripted planning or interpretation call, with its prompt and raw answer
 - `roles/approved_roles.json` the approved stakeholder roles and who approved them, when
 - `prompts/` the prompt template and **every rendered prompt** (one file per attempt)
 - `llm/attempts.jsonl` every attempt with the raw model response, model ID, sampling parameters, token use and validation result; `llm/call_log.json` rate-limit and provider events

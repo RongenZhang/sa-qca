@@ -33,6 +33,8 @@ class RunConfig(Base):
     # Frozen at run start so later project edits never change what this run used.
     # Capability token of the browser that started the run; other visitors get 404.
     owner: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    # The researcher's saved interpretation: {kind, policy, source (rules | ai | edited), narrative, notes, saved_at}.
+    interpretation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     project_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     role_approval: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     arms: Mapped[list[Any]] = mapped_column(JSON, default=list)

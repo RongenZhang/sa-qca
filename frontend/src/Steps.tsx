@@ -107,7 +107,7 @@ export function RunStep({ runId, status, setStatus, onDone, goResults }: { runId
   </section>)
 }
 
-export function ResultsStep({ results, demo, expert }: { results: Results | null; demo: Demo; expert: boolean }) {
+export function ResultsStep({ results, demo, expert, onNext }: { results: Results | null; demo: Demo; expert: boolean; onNext: () => void }) {
   if (!results) return <p>No results yet. Complete a run first.</p>
-  return <><Dashboard results={results} demo={demo} />{expert && <pre>{JSON.stringify(results, null, 1)}</pre>}</>
+  return <><Dashboard results={results} demo={demo} />{expert && <pre>{JSON.stringify(results, null, 1)}</pre>}<div className="actions"><span /><button onClick={onNext}>Next: interpretation</button></div></>
 }
