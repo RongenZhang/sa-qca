@@ -111,6 +111,11 @@ def _from_csv(text: str) -> tuple[list[str], list[list[str | None]]]:
     return r[0], [[c if c != "" else None for c in row] for row in r[1:]]
 
 
+def _upload_info(pid: str, filename: str, header: list[str], rows: list[list[str | None]]) -> dict[str, Any]:
+    return {"project_id": pid, "filename": filename, "n_rows": len(rows), "columns": column_info(header, rows),
+            "preview": {"header": header, "rows": rows[:8]}}
+
+
 def create_upload(session: Any, filename: str, content: bytes) -> dict[str, Any]:
     header, rows = parse_upload(filename, content)
     pid = "p_" + uuid.uuid4().hex[:10]
@@ -118,8 +123,135 @@ def create_upload(session: Any, filename: str, content: bytes) -> dict[str, Any]
     session.add(ProjectRow(id=pid, filename=filename, name=filename.rsplit(".", 1)[0],
                            dataset_sha256=hashlib.sha256(text.encode()).hexdigest(), dataset_csv=text))
     session.commit()
-    return {"project_id": pid, "filename": filename, "n_rows": len(rows), "columns": column_info(header, rows),
-            "preview": {"header": header, "rows": rows[:8]}}
+    return _upload_info(pid, filename, header, rows)
+
+
+# ---------------------------------------------------------------------------------------------------------------
+# The study plan: written before any data exist (phenomenon, outcome, stakeholders, conditions)
+# ---------------------------------------------------------------------------------------------------------------
+
+MAX_TEXT = 20_000
+MAX_ITEMS = 12
+
+
+def empty_study() -> dict[str, Any]:
+    return {"phenomenon": "", "outcome": {"name": "", "description": ""}, "stakeholders": [], "conditions": []}
+
+
+def validate_study(study: dict[str, Any]) -> list[str]:
+    """Structural checks only; the researcher decides what is substantively right."""
+    errs: list[str] = []
+    if not isinstance(study.get("phenomenon", ""), str) or len(study.get("phenomenon", "")) > MAX_TEXT:
+        errs.append(f"the phenomenon description must be text of at most {MAX_TEXT} characters")
+    out = study.get("outcome") or {}
+    if len(str(out.get("name", ""))) > 120 or len(str(out.get("description", ""))) > MAX_TEXT:
+        errs.append("the outcome name or description is too long")
+    for key, label in (("stakeholders", "stakeholders"), ("conditions", "conditions")):
+        items = study.get(key, [])
+        if not isinstance(items, list) or len(items) > MAX_ITEMS:
+            errs.append(f"at most {MAX_ITEMS} {label}")
+            continue
+        names = [str(i.get("name", "")).strip() for i in items]
+        if len(set(n.lower() for n in names if n)) != len([n for n in names if n]):
+            errs.append(f"{label} must have unique names")
+        for i in items:
+            if len(str(i.get("name", ""))) > 120 or any(len(str(v)) > MAX_TEXT for v in i.values() if isinstance(v, str)):
+                errs.append(f"a {label[:-1]} entry is too long")
+    for c in study.get("conditions", []):
+        n = str(c.get("name", "")).strip()
+        if n and not NAME_RE.match(n):
+            errs.append(f"condition {n!r}: names must start with a letter and use only letters, digits and underscores (a QCA requirement)")
+        if c.get("calibration", "direct") not in KINDS:
+            errs.append(f"condition {n!r}: calibration must be one of {', '.join(KINDS)}")
+    o = str(out.get("name", "")).strip()
+    if o and not NAME_RE.match(o):
+        errs.append(f"outcome {o!r}: names must start with a letter and use only letters, digits and underscores")
+    return errs
+
+
+def create_draft(session: Any, name: str) -> str:
+    pid = "p_" + uuid.uuid4().hex[:10]
+    session.add(ProjectRow(id=pid, name=name.strip() or "Untitled study", filename="", dataset_sha256="", dataset_csv="",
+                           study=empty_study()))
+    session.commit()
+    return pid
+
+
+def list_studies(session: Any) -> list[dict[str, Any]]:
+    """Saved studies on this machine, newest first (the bundled demo is always offered separately)."""
+    rows = session.query(ProjectRow).order_by(ProjectRow.created_at.desc()).all()
+    return [{"id": r.id, "name": r.name, "created_at": r.created_at.replace(tzinfo=None).isoformat(timespec="seconds") + "Z",
+             "has_dataset": bool(r.dataset_csv), "configured": bool(r.config),
+             "outcome": (r.study or {}).get("outcome", {}).get("name", "")} for r in rows]
+
+
+def get_study(session: Any, pid: str) -> dict[str, Any]:
+    if pid == "demo":
+        from app.demo import demo_study
+
+        return {"study": demo_study(), "has_dataset": True, "configured": True, "name": load_demo()["project"]["name"], "read_only": True}
+    row = session.get(ProjectRow, pid)
+    if row is None:
+        raise ProjectError("unknown project")
+    return {"study": row.study or empty_study(), "has_dataset": bool(row.dataset_csv), "configured": bool(row.config),
+            "name": row.name, "read_only": False}
+
+
+def save_study(session: Any, pid: str, study: dict[str, Any], name: str | None = None) -> dict[str, Any]:
+    if pid == "demo":
+        raise ProjectError("the demo study cannot be edited")
+    row = session.get(ProjectRow, pid)
+    if row is None:
+        raise ProjectError("unknown project")
+    errs = validate_study(study)
+    if errs:
+        raise ProjectError("; ".join(errs))
+    row.study = {"phenomenon": study.get("phenomenon", ""), "outcome": study.get("outcome") or {"name": "", "description": ""},
+                 "stakeholders": study.get("stakeholders", []), "conditions": study.get("conditions", [])}
+    if name and name.strip():
+        row.name = name.strip()
+    session.commit()
+    return get_study(session, pid)
+
+
+def attach_dataset(session: Any, pid: str, filename: str, content: bytes) -> dict[str, Any]:
+    """Attaches (or replaces) the data of an existing study. A new file invalidates an earlier variable setup, since its
+    columns may differ; the plan (phenomenon, stakeholders, conditions) is kept."""
+    row = session.get(ProjectRow, pid)
+    if row is None or pid == "demo":
+        raise ProjectError("unknown project")
+    header, rows = parse_upload(filename, content)
+    text = _to_csv(header, rows)
+    row.filename, row.dataset_csv = filename, text
+    row.dataset_sha256 = hashlib.sha256(text.encode()).hexdigest()
+    row.config = None
+    session.commit()
+    return _upload_info(pid, filename, header, rows)
+
+
+def draft_config(study: dict[str, Any], columns: list[dict[str, Any]]) -> dict[str, Any]:
+    """A first variable setup built from the plan: columns whose names match a planned condition or the outcome
+    are selected and take the planned definition, measure, calibration kind and direction. The researcher reviews it."""
+    by_name = {c["name"].lower(): c for c in columns}
+    variables: list[dict[str, Any]] = []
+    out = study.get("outcome") or {}
+    specs = [(c, "condition") for c in study.get("conditions", [])]
+    if out.get("name"):
+        specs.append(({"name": out["name"], "definition": out.get("description", ""), "how_to_measure": out.get("how_to_measure", ""),
+                       "calibration": out.get("calibration", "direct"), "direction": out.get("direction", "positive")}, "outcome"))
+    for spec, role in specs:
+        col = by_name.get(str(spec.get("name", "")).lower())
+        if col is None:
+            continue
+        kind = spec.get("calibration", "direct")
+        variables.append({"name": col["name"], "role": role, "direction": spec.get("direction", "positive") if kind != "precalibrated" else "positive",
+                          "calibration": kind, "construct_definition": spec.get("definition", ""),
+                          "instrument": spec.get("how_to_measure", ""), "units": "", "dir_exp": None, "anchors": None, "breakpoints": None})
+    desc = (study.get("phenomenon", "") or "").strip()
+    if out.get("description"):
+        desc = (desc + "\n\nOutcome of interest: " + out["description"]).strip()
+    return {"name": "", "case_description": desc, "drop_missing": False, "reference_cutoffs": None, "variables": variables,
+            "unmatched_plan": [s["name"] for s, _ in specs if str(s.get("name", "")).lower() not in by_name]}
 
 
 def validate_config(cfg: dict[str, Any], info: dict[str, dict[str, Any]], n_rows: int) -> list[str]:
@@ -278,12 +410,18 @@ def project_summary(d: dict[str, Any]) -> dict[str, Any]:
 
 
 def get_setup(session: Any, pid: str) -> dict[str, Any]:
-    """Everything the setup form needs to reopen an uploaded project for editing."""
+    """Everything the setup form needs to (re)open a project: its data columns, any saved setup, and a draft setup built
+    from the study plan when none is saved yet."""
     if pid == "demo":
         raise ProjectError("the demo project cannot be edited; upload your own data")
     row = session.get(ProjectRow, pid)
     if row is None:
         raise ProjectError("unknown project")
+    if not row.dataset_csv:
+        raise ProjectError("no data attached yet; upload a data file first")
     header, rows = _from_csv(row.dataset_csv)
-    return {"upload": {"project_id": pid, "filename": row.filename, "n_rows": len(rows), "columns": column_info(header, rows),
-                       "preview": {"header": header, "rows": rows[:8]}}, "config": row.config}
+    info = _upload_info(pid, row.filename, header, rows)
+    out: dict[str, Any] = {"upload": info, "config": row.config, "study": row.study or empty_study()}
+    if row.config is None:
+        out["draft_config"] = draft_config(row.study or empty_study(), info["columns"])
+    return out

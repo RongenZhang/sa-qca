@@ -5,7 +5,7 @@ export function Intro({ onClose }: { onClose: () => void }) {
       <p>In fsQCA, the analyst sets the calibration anchors, and results can depend on those choices. Usual robustness checks nudge the analyst's own numbers. SA-QCA enables us to ask a different question: across the range of calibration decisions based on stakeholders' different interpretations of conditions and outcomes, which findings survive?</p>
       <h3>How it works</h3>
       <ol>
-        <li>You describe the phenomenon and define each condition and outcome, then approve a set of stakeholder roles drawn from your own cases.</li>
+        <li>You describe the phenomenon and the outcome, identify stakeholders and conditions (yourself, or with optional AI suggestions you review and edit), attach your data, and approve a set of stakeholders drawn from your own cases.</li>
         <li>Each role (and a role-free "generic" LLM calibration) proposes anchors and truth-table cutoffs, with a written rationale.</li>
         <li>The same QCA (R) code analyses every proposal, to make sure of separation of judgement and calculation.</li>
         <li>Structurally invalid answers are rejected, and the invalid rate is counted as a finding.</li>

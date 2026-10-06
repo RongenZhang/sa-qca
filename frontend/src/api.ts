@@ -4,6 +4,14 @@ export type Variable = { calibration: Calibration; name: string; role: 'conditio
 export type Demo = { id: string; is_demo: boolean; has_reference: boolean; n_dropped: number; name: string; case_description: string; variables: Variable[]; reference: Record<string, Record<string, number>>; reference_cutoffs: Record<string, number | null>; dir_exp: Record<string, number | null>; warnings: string[]; n_cases: number }
 export type UploadInfo = { project_id: string; filename: string; n_rows: number; columns: { name: string; numeric: boolean; n_missing: number; n_unique: number }[]; preview: { header: string[]; rows: (string | null)[][] } }
 export type ConfigureBody = { name: string; case_description: string; drop_missing: boolean; reference_cutoffs: Record<string, number | null> | null; variables: { name: string; role: string; direction: string; calibration: Calibration; construct_definition: string; instrument: string; units: string; dir_exp: number | null; anchors: Record<string, number | null> | null; breakpoints: Record<string, number | null> | null }[] }
+export type PlanCondition = { name: string; definition: string; how_to_measure: string; calibration: Calibration; direction: 'positive' | 'negative'; rationale?: string; ai?: boolean }
+export type Study = { phenomenon: string; outcome: { name: string; description: string; how_to_measure?: string; calibration?: Calibration; direction?: 'positive' | 'negative' }; stakeholders: Role[]; conditions: PlanCondition[] }
+export type StudyState = { study: Study; has_dataset: boolean; configured: boolean; name: string; read_only: boolean }
+export type StudyListItem = { id: string; name: string; created_at: string; has_dataset: boolean; configured: boolean; outcome: string }
+export type AssistKind = 'stakeholders' | 'conditions'
+export type AssistInputs = { phenomenon: string; outcome: { name: string; description: string }; existing?: unknown[]; stakeholders?: unknown[]; count?: number }
+export type AssistResult = { items: Record<string, string>[]; generic: boolean; notice: string; provider: string; model_id: string | null; ai_generated: boolean; helper_call_ids: number[] }
+export type AiSettings = { provider: 'scripted' | 'anthropic'; model: string; temperature: number | null }
 export type Role = { name: string; description: string; relevance: string; ai?: boolean }
 export type RunReq = { project_id: string; role_set_hash: string; arms: { roles: string[]; generic: boolean; mechanical: boolean }; reps: number; provider: string; model: string; temperature: number | null; tolerance: number; spend_cap: number | null; price_in: number | null; price_out: number | null }
 export type RunRow = { run_id: number; arm: string; rep: number; status: string; mechanical_id: string | null; attempts: number; anchors: Record<string, Record<string, number>> | null; solutions: Record<'complex' | 'parsimonious' | 'intermediate', string[][]> | null }
@@ -25,6 +33,24 @@ async function j<T>(path: string, body?: unknown, headers: Record<string, string
   return r.json()
 }
 export const api = {
+  studies: () => j<StudyListItem[]>('/api/studies'),
+  newStudy: (name: string) => j<{ project_id: string }>('/api/studies', { name }),
+  getStudy: (pid: string) => j<StudyState>(`/api/projects/${pid}/study`),
+  putStudy: async (pid: string, study: Study, name?: string): Promise<StudyState> => {
+    const r = await fetch(`/api/projects/${pid}/study`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Session': getSid() }, body: JSON.stringify({ study, name }) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText)
+    return r.json()
+  },
+  attach: async (pid: string, file: File) => {
+    const fd = new FormData(); fd.append('file', file)
+    const r = await fetch(`/api/projects/${pid}/dataset`, { method: 'POST', body: fd, headers: { 'X-Session': getSid() } })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText)
+    return r.json() as Promise<UploadInfo>
+  },
+  assist: (kind: AssistKind, body: { project_id: string; inputs: AssistInputs; provider: string; model: string; temperature: number | null }, key: string, workspace: string) =>
+    j<AssistResult>(`/api/assist/${kind}`, body, { ...(key ? { 'X-Provider-Key': key } : {}), ...(workspace ? { 'X-Provider-Workspace': workspace } : {}) }),
+  assistPreview: (kind: AssistKind, body: { project_id: string; inputs: AssistInputs; provider: string; model: string; temperature: number | null }) =>
+    j<{ prompt: string | null; scripted: boolean; sent: string }>(`/api/assist/${kind}/preview`, body),
   project: (pid: string) => j<Demo>(`/api/projects/${pid}`),
   mode: () => j<{ mode: 'demo' | 'full'; max_reps: number; max_roles: number; retention_hours: number }>('/api/mode'),
   upload: async (file: File) => {
@@ -33,7 +59,7 @@ export const api = {
     if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText)
     return r.json() as Promise<UploadInfo>
   },
-  setup: (pid: string) => j<{ upload: UploadInfo; config: ConfigureBody }>(`/api/projects/${pid}/setup`),
+  setup: (pid: string) => j<{ upload: UploadInfo; config: ConfigureBody | null; study: Study; draft_config?: ConfigureBody & { unmatched_plan?: string[] } }>(`/api/projects/${pid}/setup`),
   configure: (pid: string, body: ConfigureBody) => j<Demo>(`/api/projects/${pid}/configure`, body),
   suggest: () => j<{ ai_generated: boolean; roles: Role[] }>('/api/roles/suggest', {}),
   approve: (roles: Role[], approved_by: string) => j<{ roles_hash: string; approved_by: string; approved_at: string }>('/api/roles/approve', { roles, approved_by }),

@@ -1,0 +1,40 @@
+You are assisting a researcher who is planning a configurational study (fuzzy-set Qualitative Comparative Analysis, fsQCA). The researcher will review, edit and approve everything you propose; you are not deciding anything. You have no tools and cannot look anything up. Answer only from the text below.
+
+## The phenomenon the researcher wants to study
+{{ phenomenon }}
+
+## The outcome of interest
+{{ outcome_name or "(not named yet)" }}{% if outcome_description %}: {{ outcome_description }}{% endif %}
+{% if stakeholders %}
+
+## Stakeholder groups the researcher has chosen
+{% for s in stakeholders %}- {{ s.name }}: {{ s.description }}
+{% endfor %}
+{% endif %}
+{% if existing %}
+
+## Conditions already chosen (do not repeat them)
+{% for c in existing %}- {{ c.name }}: {{ c.definition }}
+{% endfor %}
+{% endif %}
+
+## Your task
+Propose {{ count }} candidate conditions: factors that, alone or in combination with others, might help bring about the outcome. fsQCA looks for combinations of conditions, so favour conditions that can plausibly work together or substitute for one another, that differ across the cases, and that can be measured or coded for each case. Do not propose a condition that merely restates the outcome. Prefer conditions that the stakeholder groups above might judge differently.
+
+For each condition give:
+- name: a short identifier of at most 16 characters that starts with a letter and uses only letters, digits and underscores (for example TRAINING);
+- definition: what the condition means in this setting, in one or two sentences;
+- how_to_measure: what kind of data would capture it for each case (for example a survey scale with its end points, a count, an index, or qualitative coding by two coders);
+- calibration: "direct" if it will be a continuous raw measure that you would turn into set membership with three anchors; "breakpoints" if it is a count or ordinal measure better divided into bands on a four-value scale (0, 0.33, 0.67, 1); "precalibrated" if the researcher will code set membership directly (for example from documents) and the scores are used as given;
+- direction: "positive" if higher raw values mean more membership in the set, "negative" if higher raw values mean less (use "positive" for precalibrated);
+- rationale: one sentence on why it might matter for the outcome.
+
+Return ONLY a JSON object matching this schema, with no text before or after it:
+{{ json_schema }}
+{% if validation_errors %}
+
+## Your previous answer was rejected
+{% for e in validation_errors %}- {{ e }}
+{% endfor %}
+Return a corrected complete JSON object.
+{% endif %}

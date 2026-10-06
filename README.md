@@ -33,6 +33,9 @@ cd frontend && npm install && npm run dev      # open http://localhost:5173
 
 Start with the bundled **demo project** (synthetic data). In step 3 choose "Scripted test responses": a stand-in that needs no key and is **not** LLM output. To use a real model, choose Anthropic and enter your key (and a workspace ID if your key is not scoped to one). The key stays in browser memory and is sent per request only.
 
+## Your own study
+The app walks you from your own question to results: describe the phenomenon and outcome, identify stakeholders and conditions (yourself, or with optional AI suggestions you review and edit), attach and map your data, compare calibrations across stakeholders, and read the results. See [docs/study-builder.md](docs/study-builder.md).
+
 ## Your own data
 
 Step 1 › "Upload my own data": CSV (comma, semicolon or tab) or Excel (first sheet), up to 10 MB. Choose the outcome and conditions; give each a construct definition and measurement instrument; declare its direction; optionally enter your original anchors, cutoffs and directional expectations (needed for the mechanical source and the comparison with your published solution). Variable names must start with a letter and use letters, digits and underscores. Rows with missing values are dropped only if you tick the listwise-deletion box. The file stays in the local database; models receive only definitions and summary statistics, never rows.

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { api, type Calibration, type ConfigureBody, type Demo, type UploadInfo } from './api'
+import { api, type Calibration, type ConfigureBody, type Demo, type Study, type UploadInfo } from './api'
 
 type Col = { use: boolean; role: 'condition' | 'outcome'; cal: Calibration; direction: 'positive' | 'negative'; units: string; def: string; inst: string; dirExp: string; fn: string; cr: string; fm: string; b0: string; b33: string; b67: string }
 const blank = (): Col => ({ use: false, role: 'condition', cal: 'direct', direction: 'positive', units: '', def: '', inst: '', dirExp: '', fn: '', cr: '', fm: '', b0: '', b33: '', b67: '' })
@@ -7,16 +7,19 @@ const num = (s: string) => (s.trim() === '' ? null : Number(s))
 
 const str = (x: number | null | undefined) => (x === null || x === undefined ? '' : String(x))
 
-export function Upload({ onReady, existing }: { onReady: (p: Demo) => void; existing?: { info: UploadInfo; config: ConfigureBody } }) {
-  const ex = existing?.config
+type Cols = Record<string, Col>
+const colsFrom = (info: UploadInfo, cfg: ConfigureBody | null | undefined): Cols => Object.fromEntries(info.columns.map((c) => {
+  const v = cfg?.variables.find((x) => x.name === c.name)
+  return [c.name, v ? { use: true, role: v.role as Col['role'], cal: v.calibration ?? 'direct', direction: v.direction as Col['direction'], units: v.units, def: v.construct_definition, inst: v.instrument, dirExp: str(v.dir_exp), fn: str(v.anchors?.full_non_membership), cr: str(v.anchors?.crossover), fm: str(v.anchors?.full_membership), b0: str(v.breakpoints?.break_0), b33: str(v.breakpoints?.break_33), b67: str(v.breakpoints?.break_67) } : blank()]
+}))
+
+/** `attachTo`: add the file to an existing study (keeping its plan); `plan`: the study plan, used to prefill the mapping;
+ *  `existing`: reopen a saved or drafted mapping; `unmatched`: planned names that have no column in the file. */
+export function Upload({ onReady, existing, attachTo, plan, unmatched }: { onReady: (p: Demo) => void; existing?: { info: UploadInfo; config: ConfigureBody | null }; attachTo?: string; plan?: Study; unmatched?: string[] }) {
+  const ex = existing?.config ?? undefined
   const [info, setInfo] = useState<UploadInfo | null>(existing?.info ?? null)
-  const [cols, setCols] = useState<Record<string, Col>>(() => {
-    if (!existing) return {}
-    return Object.fromEntries(existing.info.columns.map((c) => {
-      const v = ex?.variables.find((x) => x.name === c.name)
-      return [c.name, v ? { use: true, role: v.role as Col['role'], cal: v.calibration ?? 'direct', direction: v.direction as Col['direction'], units: v.units, def: v.construct_definition, inst: v.instrument, dirExp: str(v.dir_exp), fn: str(v.anchors?.full_non_membership), cr: str(v.anchors?.crossover), fm: str(v.anchors?.full_membership), b0: str(v.breakpoints?.break_0), b33: str(v.breakpoints?.break_33), b67: str(v.breakpoints?.break_67) } : blank()]
-    }))
-  })
+  const [cols, setCols] = useState<Cols>(() => (existing ? colsFrom(existing.info, ex) : {}))
+  const [notFound, setNotFound] = useState<string[]>(unmatched ?? [])
   const [name, setName] = useState(ex?.name ?? '')
   const [desc, setDesc] = useState(ex?.case_description ?? '')
   const [drop, setDrop] = useState(ex?.drop_missing ?? false)
@@ -30,7 +33,13 @@ export function Upload({ onReady, existing }: { onReady: (p: Demo) => void; exis
   const pick = async (f: File | undefined) => {
     if (!f) return
     setErr(''); setBusy(true)
-    try { const u = await api.upload(f); setInfo(u); setName(f.name.replace(/\.[^.]+$/, '')); setCols(Object.fromEntries(u.columns.map((c) => [c.name, blank()]))) } catch (e) { setErr(String(e).replace(/^Error: /, '')); setInfo(null) }
+    try {
+      if (attachTo) {  // keep the study plan: attach the file, then prefill the mapping from the plan
+        const u = await api.attach(attachTo, f); const s = await api.setup(attachTo)
+        setInfo(u); setCols(colsFrom(u, s.draft_config)); setNotFound(s.draft_config?.unmatched_plan ?? [])
+        if (s.draft_config) setDesc(s.draft_config.case_description)
+      } else { const u = await api.upload(f); setInfo(u); setName(f.name.replace(/\.[^.]+$/, '')); setCols(Object.fromEntries(u.columns.map((c) => [c.name, blank()]))) }
+    } catch (e) { setErr(String(e).replace(/^Error: /, '')); setInfo(null) }
     setBusy(false)
   }
   const used = info ? info.columns.filter((c) => cols[c.name]?.use) : []
@@ -50,10 +59,12 @@ export function Upload({ onReady, existing }: { onReady: (p: Demo) => void; exis
   }
   return (
     <div className="card">
-      <h3>{existing ? 'Edit project' : 'Upload your data'}</h3>
-      {existing && <p className="muted" role="note">Edits apply to future runs and prompts. Runs you have already made keep the definitions they used.</p>}
+      <h3>{existing ? (ex ? 'Edit the mapping and definitions' : 'Map your columns to the plan') : 'Upload your data'}</h3>
+      {existing && ex && <p className="muted" role="note">Edits apply to future runs and prompts. Runs you have already made keep the definitions they used.</p>}
+      {plan && info && <p className="muted" role="note">Columns whose names match your planned conditions or outcome are already ticked and filled in from your plan. Check each one, and tick any others you want to use.</p>}
+      {notFound.length > 0 && <p className="warn" role="status">Planned but not found in your file: {notFound.join(', ')}. Rename a column to match, or leave them out.</p>}
       <p className="muted">CSV (comma, semicolon or tab) or Excel (first sheet), up to 10 MB. The file stays on this machine. Only definitions and summary statistics of the variables you choose are ever sent to a model.</p>
-      {!existing && <label>Data file<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" onChange={(e) => pick(e.target.files?.[0])} /></label>}
+      {!existing && !info && <label>Data file<input type="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm" onChange={(e) => pick(e.target.files?.[0])} /></label>}
       {err && <p role="alert" className="warn">{err}</p>}
       {info && <>
         <p><b>{info.filename}</b> · {info.n_rows} rows · {info.columns.length} columns</p>

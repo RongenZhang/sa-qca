@@ -237,3 +237,23 @@ def test_skaaning_default_leaves_the_outcome_alone_when_there_are_calibrated_con
                                      {"consistency_threshold": 0.8, "frequency_threshold": 1}, kinds={"Y": "breakpoints"})
     fact = [c for c in cfgs if c.perturbation["kind"] == "skaaning_factorial"]
     assert len(fact) == 2 and all(c.decision["outcome"]["breakpoints"] == ref["Y"] for c in fact)
+
+
+def test_ai_use_statement_names_planning_help_only_for_real_model_calls():
+    from datetime import datetime
+    from types import SimpleNamespace
+
+    from app.db.models import HelperCall, RunConfig
+    from app.exports.report import ai_use_statement
+
+    cfg = RunConfig(provider="anthropic", model="m", reps=2, tolerance=0.0, sampling={}, roles=[], arms=["generic"], template_version="default_v3", template_sha256="x")
+    att = [SimpleNamespace(model_id="m", started_at=datetime(2026, 1, 1), attempt_kind="first")]
+    runs = [SimpleNamespace(arm="generic", status="valid")]
+    scripted_call = HelperCall(kind="stakeholders", provider="scripted", prompt="", attempt_kind="first", validation_ok=True)
+    model_call = HelperCall(kind="conditions", provider="anthropic", model_id="claude-x", prompt="p", attempt_kind="first", validation_ok=True)
+    failed_call = HelperCall(kind="stakeholders", provider="anthropic", model_id="claude-x", prompt="p", attempt_kind="first", validation_ok=False)
+    base = ai_use_statement(cfg, runs, att, {}, 0, [scripted_call, failed_call])
+    assert "also asked to propose" not in base
+    with_help = ai_use_statement(cfg, runs, att, {}, 0, [scripted_call, model_call, failed_call])
+    assert "also asked to propose conditions" in with_help and "claude-x" in with_help and "1 accepted answers" in with_help
+    assert "no data were sent" in with_help

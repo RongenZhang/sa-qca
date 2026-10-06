@@ -24,7 +24,7 @@ from app.engine.report import validation_report
 from app.engine.rinput import build_r_input
 from app.engine.runner import CostModel, EngineContext, run_batch
 from app.llm.base import LLMProvider
-from app.projects import get_project, project_summary
+from app.projects import get_project, get_study, project_summary
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 _engine: Engine | None = None
@@ -45,6 +45,10 @@ def init_db(url: str | None = None) -> None:
         for col, ddl in (("project_id", "VARCHAR DEFAULT 'demo'"), ("project_snapshot", "JSON"), ("role_approval", "JSON"), ("owner", "VARCHAR")):
             if col not in have:
                 conn.execute(text(f"ALTER TABLE run_config ADD COLUMN {col} {ddl}"))
+    have_p = {c["name"] for c in inspect(_engine).get_columns("project")}
+    if "study" not in have_p:
+        with _engine.begin() as conn:
+            conn.execute(text("ALTER TABLE project ADD COLUMN study JSON"))
     _SessionLocal = sessionmaker(_engine, expire_on_commit=False)
 
 
@@ -132,6 +136,19 @@ def _check_demo_limits(req: dict[str, Any], sid: str | None) -> None:
         raise Busy("the demo is busy; please try again in a minute")
 
 
+def make_helper_provider(provider: str, api_key: str | None, workspace_id: str | None = None) -> LLMProvider | None:
+    """The model used for planning and interpretation help; None means the scripted fallback. The public demo never calls a model."""
+    if config.demo_only() or provider in ("scripted", "demo-mock", ""):
+        return None
+    if provider == "anthropic":
+        if not api_key:
+            raise ValueError("an API key is required for the Anthropic provider (enter it in AI settings)")
+        from app.llm.anthropic_provider import AnthropicProvider
+
+        return AnthropicProvider(api_key, workspace_id=workspace_id)
+    raise ValueError(f"unknown provider {provider}")
+
+
 def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None = None, sid: str | None = None) -> int:
     _check_demo_limits(req, sid)
     if config.demo_only():
@@ -160,6 +177,8 @@ def start_run(req: dict[str, Any], api_key: str | None, workspace_id: str | None
                if demo["has_reference"] else None)
     snapshot = project_summary(demo)
     snapshot["dataset_sha256"] = demo["dataset_sha256"]
+    with session() as s2:
+        snapshot["study"] = get_study(s2, req.get("project_id", "demo"))["study"]  # the plan as it stood when the run started
     approval = None
     if roles:
         with session() as s1:

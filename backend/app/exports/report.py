@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.db.models import CallLog, Run, RunAttempt, RunConfig
+from app.db.models import CallLog, HelperCall, Run, RunAttempt, RunConfig
 from app.engine.dashboard import build_dashboard
 
 E = html.escape
@@ -59,7 +59,7 @@ def _sim_svg(d: dict[str, Any]) -> str:
     return "".join(out)
 
 
-def ai_use_statement(cfg: RunConfig, runs: list[Run], attempts: list[RunAttempt], env: dict[str, Any], rl: int) -> str:
+def ai_use_statement(cfg: RunConfig, runs: list[Run], attempts: list[RunAttempt], env: dict[str, Any], rl: int, helper: list[HelperCall] | None = None) -> str:
     agent = [r for r in runs if r.arm.startswith("role:") or r.arm == "generic"]
     invalid = [r for r in agent if r.status == "invalid"]
     models = sorted({a.model_id for a in attempts if a.model_id}) or [cfg.model]
@@ -72,7 +72,14 @@ def ai_use_statement(cfg: RunConfig, runs: list[Run], attempts: list[RunAttempt]
     rate = f"{len(invalid)} of {len(agent)} agent runs ({100 * len(invalid) / len(agent):.0f}%)" if agent else "no agent runs"
     arms = f"{cfg.reps} repetitions for each of {len(roles)} stakeholder roles ({'; '.join(roles)})" if roles else "no stakeholder-role runs"
     gen = f" and {cfg.reps} repetitions of a role-free generic prompt" if "generic" in (cfg.arms or []) else ""
-    return (f"Generative AI was used in this study as a research instrument, not to analyse the data or to write the text. "
+    model_help = [x for x in (helper or []) if x.provider != "scripted" and x.attempt_kind and x.validation_ok]
+    planning = ""
+    if model_help:
+        kinds = ", ".join(sorted({x.kind for x in model_help}))
+        ms = ", ".join(sorted({x.model_id for x in model_help if x.model_id}))
+        planning = (f" Before the analysis, the same model family ({ms}) was also asked to propose {kinds} for the study from the researcher's own written description "
+                    f"({len(model_help)} accepted answers; prompts and raw answers are archived); the researcher reviewed, edited and approved everything that was used, and no data were sent.")
+    return (f"Generative AI was used in this study as a research instrument, not to analyse the data or to write the text.{planning} "
             f"The language model {', '.join(models)} ({cfg.provider}) was called through its API {when} to propose calibration anchors and "
             f"truth-table cutoffs, each with a written rationale. The design comprised {arms}{gen}. Each prompt contained the description of the "
             f"phenomenon, construct definitions, measurement instruments, summary statistics of each variable's observed distribution and, for "
@@ -99,6 +106,7 @@ def build_report(session: Session, cfg_id: int) -> str:
     outs = [r.judgment.r_result.r_output for r in runs if r.judgment and r.judgment.r_result]
     v: dict[str, Any] = next((o["versions"] for o in outs if o.get("versions")), {})
     d = build_dashboard(res, "parsimonious")
+    helper = [h for h in session.query(HelperCall).filter(HelperCall.project_id == cfg.project_id, HelperCall.created_at <= cfg.created_at).all()]
 
     h = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'><title>SA-QCA report, run {cfg_id}</title><style>"
          "body{font:15px/1.5 system-ui,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;color:#1d2329}"
@@ -116,6 +124,15 @@ def build_report(session: Session, cfg_id: int) -> str:
              ". Dataset checksum (SHA-256): " +
              (f"<code>{E(str(proj['dataset_sha256'])[:16])}…</code>" if proj.get("dataset_sha256") else "not recorded (run predates project snapshots)") + "</p>")
     h.append(f"<p>{E(proj['case_description'])}</p>")
+    st = proj.get("study") or {}
+    if st:
+        h.append(f"<h3>Study plan</h3><p><b>Outcome of interest:</b> {E(str((st.get('outcome') or {}).get('name', '')))}"
+                 + (f": {E(str(st['outcome'].get('description', '')))}" if (st.get("outcome") or {}).get("description") else "") + "</p>")
+        if st.get("stakeholders"):
+            h.append(_table(["Stakeholder", "Vantage point", "Origin"], [[x["name"], x.get("description", ""), "AI-suggested, researcher-edited" if x.get("ai") else "researcher"] for x in st["stakeholders"]]))
+        if st.get("conditions"):
+            h.append(_table(["Planned condition", "Definition", "Calibration", "Origin"], [[x["name"], x.get("definition", ""), x.get("calibration", "direct"), "AI-suggested, researcher-edited" if x.get("ai") else "researcher"] for x in st["conditions"]]))
+    h.append("<h3>Variables</h3>")
     h.append(_table(["Variable", "Role", "Direction", "Construct definition", "Instrument", "Observed range", "Original anchors / breakpoints"],
                     [[x["name"], x["role"], x["direction"], x["construct_definition"], x["instrument"], f"{x['stats']['min']} to {x['stats']['max']}",
                       ("fixed (already calibrated)" if x.get("calibration") == "precalibrated" else " / ".join(str(a) for a in proj["reference"].get(x["name"], {}).values()) or "none")] for x in proj["variables"]]))
@@ -169,6 +186,6 @@ def build_report(session: Session, cfg_id: int) -> str:
     if cfg.provider == "demo-mock":
         h.append("<p class='note' style='border-color:#D55E00'><b>Do not use this statement.</b> This run used scripted test responses, not a language model; "
                  "the text below is only an illustration of what the statement will say for a real run.</p>")
-    h.append(f"<p class='note'>{E(ai_use_statement(cfg, runs, attempts, v, rl))}</p>")
+    h.append(f"<p class='note'>{E(ai_use_statement(cfg, runs, attempts, v, rl, helper))}</p>")
     h.append("</body></html>")
     return "".join(h)
