@@ -344,7 +344,7 @@ def _assist_inputs(kind: str, body: AssistIn) -> dict[str, Any]:
         inputs["demo"] = True
     elif config.demo_only():
         raise HTTPException(403, "only the demo study is available on this public demo")
-    if kind not in assist.KINDS:
+    if kind not in assist.PLANNING:
         raise HTTPException(404, f"unknown helper {kind!r}")
     try:
         assist.check_inputs(kind, inputs)
@@ -375,6 +375,74 @@ def assist_run(kind: str, body: AssistIn, x_provider_key: str | None = Header(de
         raise HTTPException(400, str(e)) from e
     except assist.HelperError as e:
         raise HTTPException(502, str(e)) from e
+
+
+class InterpIn(BaseModel):
+    kind: str = "parsimonious"
+    policy: str = "union"
+    provider: str = "scripted"
+    model: str = "claude-opus-5-5"
+    temperature: float | None = None
+
+
+class InterpSave(BaseModel):
+    kind: str = "parsimonious"
+    policy: str = "union"
+    source: str  # rules | ai | edited
+    narrative: dict[str, Any]
+    notes: str = ""
+
+
+def _interp_args(kind: str, policy: str) -> None:
+    if kind not in ("complex", "parsimonious", "intermediate") or policy not in ("union", "first"):
+        raise HTTPException(400, "bad kind or policy")
+
+
+@app.get("/api/runs/{cfg_id}/interpretation")
+def interpretation(cfg_id: int = Depends(owned_run), kind: str = "parsimonious", policy: str = "union") -> dict[str, Any]:
+    from app.engine.interpret import template_narrative
+
+    _interp_args(kind, policy)
+    facts, _ = service.interpretation_context(cfg_id, kind, policy)
+    return {"facts": facts, "narrative": template_narrative(facts), "saved": service.saved_interpretation(cfg_id)}
+
+
+@app.post("/api/runs/{cfg_id}/interpretation/preview")
+def interpretation_preview(body: InterpIn, cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
+    _interp_args(body.kind, body.policy)
+    scripted = config.demo_only() or body.provider in ("scripted", "demo-mock", "")
+    _, inputs = service.interpretation_context(cfg_id, body.kind, body.policy)
+    return {"prompt": None if scripted else assist.build_prompt("interpretation", inputs), "scripted": scripted,
+            "sent": "your study text and the computed facts of this run; never your data rows" if not scripted else "nothing: the rule-based summary is produced locally"}
+
+
+@app.post("/api/runs/{cfg_id}/interpretation/ai")
+def interpretation_ai(body: InterpIn, cfg_id: int = Depends(owned_run), x_provider_key: str | None = Header(default=None),
+                      x_provider_workspace: str | None = Header(default=None)) -> dict[str, Any]:
+    _interp_args(body.kind, body.policy)
+    _, inputs = service.interpretation_context(cfg_id, body.kind, body.policy)
+    try:
+        provider = service.make_helper_provider(body.provider, x_provider_key, x_provider_workspace)
+        sampling = {"temperature": body.temperature} if body.temperature is not None else {}
+        with service.session() as s:
+            return assist.run_helper(s, "interpretation", inputs, provider, body.model, sampling, None, run_config_id=cfg_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except assist.HelperError as e:
+        raise HTTPException(502, str(e)) from e
+
+
+@app.put("/api/runs/{cfg_id}/interpretation")
+def save_interpretation(body: InterpSave, cfg_id: int = Depends(owned_run)) -> dict[str, Any]:
+    from jsonschema import Draft202012Validator
+
+    _interp_args(body.kind, body.policy)
+    if body.source not in ("rules", "ai", "edited") or len(body.notes) > 20_000:
+        raise HTTPException(400, "bad source or notes")
+    errs = [e.message for e in Draft202012Validator(assist.SCHEMAS["interpretation"]).iter_errors(body.narrative)]
+    if errs:
+        raise HTTPException(400, "the narrative does not have the expected structure: " + "; ".join(errs[:3]))
+    return service.save_interpretation(cfg_id, body.model_dump())
 
 
 @app.get("/api/similarity/metrics")

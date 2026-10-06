@@ -19,7 +19,8 @@ from app.domain.prompt import load_template
 from app.domain.validator import ValidationError
 from app.llm.base import LLMProvider, ProviderError, RateLimitError
 
-KINDS = ("stakeholders", "conditions")
+PLANNING = ("stakeholders", "conditions")
+KINDS = (*PLANNING, "interpretation")
 NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_]{0,15}$"
 
 
@@ -48,6 +49,33 @@ SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+def _compact_facts(facts: dict[str, Any]) -> str:
+    keep: dict[str, Any] = {k: facts[k] for k in ("kind", "reference", "paths", "agreement", "mechanical_matches_analyst_share", "scripted", "reps") if k in facts}
+    keep["stakeholder_and_other_sources"] = [{k: s[k] for k in ("label", "kind", "n_valid", "n_invalid", "invalid_rate", "modal_solution", "modal_share",
+                                                                 "distinct_solutions", "path_share", "similarity_to_analyst_mean", "calibration", "cutoffs") if k in s} for s in facts["sources"]]
+    return json.dumps(keep, indent=1, ensure_ascii=False)
+
+
+SCHEMAS["interpretation"] = {
+    "type": "object", "additionalProperties": False,
+    "required": ["headline", "robust_findings", "contested_findings", "stakeholder_perspectives", "implications", "caveats"],
+    "properties": {
+        "headline": _str(20, 500),
+        "robust_findings": {"type": "array", "maxItems": 12, "items": {"type": "object", "additionalProperties": False, "required": ["path", "meaning"],
+                                                                         "properties": {"path": _str(1, 200), "meaning": _str(30, 1500)}}},
+        "contested_findings": {"type": "array", "maxItems": 16, "items": {
+            "type": "object", "additionalProperties": False, "required": ["path", "holds_under", "fails_under", "meaning"],
+            "properties": {"path": _str(1, 200), "holds_under": {"type": "array", "items": _str(1, 120)}, "fails_under": {"type": "array", "items": _str(1, 120)},
+                           "meaning": _str(30, 1800)}}},
+        "stakeholder_perspectives": {"type": "array", "minItems": 1, "maxItems": 12, "items": {
+            "type": "object", "additionalProperties": False, "required": ["stakeholder", "reading", "implication"],
+            "properties": {"stakeholder": _str(1, 120), "reading": _str(30, 1800), "implication": _str(15, 1500)}}},
+        "implications": _str(30, 3000),
+        "caveats": {"type": "array", "minItems": 1, "maxItems": 10, "items": _str(10, 700)},
+    },
+}
+
+
 def build_prompt(kind: str, inputs: dict[str, Any], validation_errors: list[str] | None = None) -> str:
     env = Environment(undefined=StrictUndefined, keep_trailing_newline=True, trim_blocks=True, lstrip_blocks=True)
     return env.from_string(load_template(f"assist_{kind}_v1")).render(
@@ -56,7 +84,9 @@ def build_prompt(kind: str, inputs: dict[str, Any], validation_errors: list[str]
         outcome_description=(inputs.get("outcome") or {}).get("description", ""),
         existing=inputs.get("existing") or [],
         stakeholders=inputs.get("stakeholders") or [],
-        count=int(inputs.get("count") or (5 if kind == "stakeholders" else 5)),
+        conditions=inputs.get("conditions") or [],
+        count=int(inputs.get("count") or 5),
+        facts_json=_compact_facts(inputs["facts"]) if kind == "interpretation" else "",
         json_schema=json.dumps(SCHEMAS[kind], indent=2),
         validation_errors=validation_errors or [],
     )
@@ -65,6 +95,10 @@ def build_prompt(kind: str, inputs: dict[str, Any], validation_errors: list[str]
 def check_inputs(kind: str, inputs: dict[str, Any]) -> None:
     if kind not in KINDS:
         raise ValueError(f"unknown helper {kind!r}")
+    if kind == "interpretation":
+        if not isinstance(inputs.get("facts"), dict) or "paths" not in inputs["facts"] or "sources" not in inputs["facts"]:
+            raise ValueError("the interpretation needs the computed facts of a finished run")
+        return
     if len(str(inputs.get("phenomenon", "")).strip()) < 20:
         raise ValueError("describe the phenomenon you want to study first (at least a sentence or two)")
     if len(str(inputs.get("phenomenon", ""))) > 20_000:
@@ -80,6 +114,9 @@ def validate(kind: str, text: str, inputs: dict[str, Any]) -> tuple[bool, list[V
             for e in sorted(Draft202012Validator(SCHEMAS[kind]).iter_errors(parsed), key=lambda e: list(map(str, e.path)))]
     if errs:
         return False, errs, None
+    if kind == "interpretation":
+        g = _grounding_errors(parsed, inputs["facts"])
+        return (not g), g, (parsed if not g else None)
     items = parsed[kind]
     names = [i["name"].strip().lower() for i in items]
     if len(set(names)) != len(names):
@@ -94,6 +131,30 @@ def validate(kind: str, text: str, inputs: dict[str, Any]) -> tuple[bool, list[V
     return (not errs), errs, (parsed if not errs else None)
 
 
+def _grounding_errors(parsed: dict[str, Any], facts: dict[str, Any]) -> list[ValidationError]:
+    """The narrative may only talk about what the computed facts contain."""
+    cls = {p["path"]: p["classification"] for p in facts["paths"]}
+    people = {s["label"] for s in facts["sources"] if s["kind"] == "stakeholder"}
+    errs: list[ValidationError] = []
+    for i, f in enumerate(parsed["robust_findings"]):
+        if f["path"] not in cls:
+            errs.append(ValidationError("grounding", f"$.robust_findings[{i}].path", f"{f['path']!r} is not a path in the facts"))
+        elif cls[f["path"]] != "robust":
+            errs.append(ValidationError("grounding", f"$.robust_findings[{i}].path", f"{f['path']!r} is classified {cls[f['path']]!r}, not robust"))
+    for i, f in enumerate(parsed["contested_findings"]):
+        if f["path"] not in cls:
+            errs.append(ValidationError("grounding", f"$.contested_findings[{i}].path", f"{f['path']!r} is not a path in the facts"))
+        elif cls[f["path"]] == "robust":
+            errs.append(ValidationError("grounding", f"$.contested_findings[{i}].path", f"{f['path']!r} is robust, not contested"))
+        for who in (*f["holds_under"], *f["fails_under"]):
+            if who not in people:
+                errs.append(ValidationError("grounding", f"$.contested_findings[{i}]", f"{who!r} is not a stakeholder in the facts"))
+    for i, p in enumerate(parsed["stakeholder_perspectives"]):
+        if p["stakeholder"] not in people:
+            errs.append(ValidationError("grounding", f"$.stakeholder_perspectives[{i}].stakeholder", f"{p['stakeholder']!r} is not a stakeholder in the facts"))
+    return errs
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # Scripted fallback: used when no model is connected (and always on the public demo). Not language-model output.
 # ---------------------------------------------------------------------------------------------------------------
@@ -104,6 +165,11 @@ def _topic(inputs: dict[str, Any]) -> str:
 
 
 def scripted(kind: str, inputs: dict[str, Any]) -> dict[str, Any]:
+    if kind == "interpretation":
+        from app.engine.interpret import template_narrative
+
+        return {"interpretation": template_narrative(inputs["facts"]), "generic": False,
+                "notice": "Written by fixed rules from the computed facts, not by a language model."}
     """Returns {"items": [...], "generic": bool, "notice": str}. For the bundled demo study the suggestions are the demo's own;
     for anything else they are generic prompts to think with, never tailored to the researcher's topic."""
     if inputs.get("demo"):
@@ -155,28 +221,30 @@ def _complete(provider: LLMProvider, prompt: str, model: str, sampling: dict[str
 
 
 def run_helper(session: Session, kind: str, inputs: dict[str, Any], provider: LLMProvider | None, model: str,
-               sampling: dict[str, Any], project_id: str | None = None, sleep: Callable[[float], None] = time.sleep) -> dict[str, Any]:
+               sampling: dict[str, Any], project_id: str | None = None, sleep: Callable[[float], None] = time.sleep,
+               run_config_id: int | None = None) -> dict[str, Any]:
     """Runs one helper. `provider=None` means scripted. Returns the suggestions plus what is needed to label and trace them."""
     check_inputs(kind, inputs)
     if provider is None:
         out = scripted(kind, inputs)
-        row = _log(session, project_id=project_id, kind=kind, provider="scripted", prompt="(scripted: no model was called)",
+        row = _log(session, project_id=project_id, run_config_id=run_config_id, kind=kind, provider="scripted", prompt="(scripted: no model was called)",
                    raw_response=json.dumps(out), parsed=out, validation_ok=True)
         session.commit()
-        return {**out, "provider": "scripted", "model_id": None, "ai_generated": False, "helper_call_ids": [row.id]}
+        return {"items": [], **out, "provider": "scripted", "model_id": None, "ai_generated": False, "helper_call_ids": [row.id]}
     errors: list[str] | None = None
     ids: list[int] = []
     for attempt in ("first", "validation_retry"):
         prompt = build_prompt(kind, inputs, errors)
         resp = _complete(provider, prompt, model, sampling, sleep)
         ok, errs, parsed = validate(kind, resp.text, inputs)
-        row = _log(session, project_id=project_id, kind=kind, provider=provider.name, model_id=resp.model_id, sampling=sampling,
+        row = _log(session, project_id=project_id, run_config_id=run_config_id, kind=kind, provider=provider.name, model_id=resp.model_id, sampling=sampling,
                    attempt_kind=attempt, prompt=prompt, raw_response=resp.text, parsed=parsed, validation_ok=ok,
                    validation_errors=[e.__dict__ for e in errs], tokens_in=resp.tokens_in, tokens_out=resp.tokens_out)
         ids.append(row.id)
         if ok and parsed is not None:
             session.commit()
-            return {"items": parsed[kind], "generic": False, "notice": "", "provider": provider.name, "model_id": resp.model_id,
+            body: dict[str, Any] = {"interpretation": parsed, "items": []} if kind == "interpretation" else {"items": parsed[kind]}
+            return {**body, "generic": False, "notice": "", "provider": provider.name, "model_id": resp.model_id,
                     "ai_generated": True, "helper_call_ids": ids}
         errors = [f"[{e.code}] {e.path}: {e.message}" for e in errs]
     session.commit()

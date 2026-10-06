@@ -2,10 +2,11 @@ import { useEffect, useRef, useState } from 'react'
 import { AiSettingsPanel, DEFAULT_AI } from './AiSettings'
 import { api, type AiSettings, type Demo, type Results, type RunReq, type Status, type Study, type StudyListItem, type StudyState } from './api'
 import { Intro } from './Intro'
+import { InterpretStep } from './Interpret'
 import { CalibrationStep, DataStep, ResultsStep, RunStep } from './Steps'
 import { ConditionsStep, StakeholdersStep, StudyStep, type SaveState } from './Study'
 
-const STEPS = ['1 Question', '2 Stakeholders', '3 Conditions', '4 Data', '5 Calibration', '6 Analysis', '7 Results']
+const STEPS = ['1 Question', '2 Stakeholders', '3 Conditions', '4 Data', '5 Calibration', '6 Analysis', '7 Results', '8 Interpretation']
 const clean = (e: unknown) => String(e).replace(/^Error: /, '')
 
 // Per-tab convenience only (never the API key). Falls back silently if storage is unavailable.
@@ -83,7 +84,7 @@ export default function App() {
     api.getStudy(projectId).then(setState).catch(() => undefined)
   }
   const planned = !!study && study.phenomenon.trim().length >= 20 && !!study.outcome.name.trim()
-  const done = [planned, approved, !!study?.conditions.length, !!state?.configured, false, status?.state === 'completed', !!results]
+  const done = [planned, approved, !!study?.conditions.length, !!state?.configured, false, status?.state === 'completed', !!results, false]
   const needData = <div className="card"><p>Finish the data step first: attach your data and map it to your conditions and outcome.</p><button onClick={() => setStep(3)}>Go to the data step</button></div>
   const start = async () => {
     try {
@@ -116,7 +117,8 @@ export default function App() {
           {step === 3 && <DataStep project={project} projectId={projectId} study={study} hasDataset={state.has_dataset} configured={state.configured} demoOnly={demoOnly} expert={expert} onProject={onProject} onNext={() => setStep(4)} onBack={() => setStep(2)} />}
           {step === 4 && (project ? <CalibrationStep demoOnly={demoOnly} maxReps={mode?.max_reps ?? 1000} demo={project} design={design} setDesign={setDesign} roles={roles} approved={approved} ai={ai} apiKey={apiKey} openSettings={() => setSettingsOpen(true)} expert={expert} onBack={() => setStep(3)} onStart={start} /> : needData)}
           {step === 5 && <RunStep runId={runId} status={status} setStatus={setStatus} onDone={async (id) => { setResults(await api.results(id)) }} goResults={() => setStep(6)} />}
-          {step === 6 && (project || results ? <ResultsStep results={results} demo={results?.project ?? (project as Demo)} expert={expert} /> : needData)}
+          {step === 6 && (project || results ? <ResultsStep results={results} demo={results?.project ?? (project as Demo)} expert={expert} onNext={() => setStep(7)} /> : needData)}
+          {step === 7 && <InterpretStep runId={results ? results.config.id : null} ai={ai} apiKey={apiKey} workspace={workspaceId} demoOnly={demoOnly} onBack={() => setStep(6)} />}
         </>}
       </main>
     </>

@@ -12,6 +12,17 @@ export type AssistKind = 'stakeholders' | 'conditions'
 export type AssistInputs = { phenomenon: string; outcome: { name: string; description: string }; existing?: unknown[]; stakeholders?: unknown[]; count?: number }
 export type AssistResult = { items: Record<string, string>[]; generic: boolean; notice: string; provider: string; model_id: string | null; ai_generated: boolean; helper_call_ids: number[] }
 export type AiSettings = { provider: 'scripted' | 'anthropic'; model: string; temperature: number | null }
+export type Narrative = { headline: string; robust_findings: { path: string; meaning: string }[]; contested_findings: { path: string; holds_under: string[]; fails_under: string[]; meaning: string }[]
+  stakeholder_perspectives: { stakeholder: string; reading: string; implication: string }[]; implications: string; caveats: string[] }
+export type Facts = {
+  kind: string; reference: { solution: string; paths: string[] } | null; scripted: boolean
+  sources: { id: string; label: string; kind: string; n_runs: number; n_valid: number; n_invalid: number; invalid_rate: number | null; modal_solution: string | null; modal_share: number | null
+    distinct_solutions: number; similarity_to_analyst_mean: number | null; matches_analyst_share: number | null; calibration: { variable: string; stance: string; shift_pct_of_scale: number }[] }[]
+  paths: { path: string; in_analyst_solution: boolean; classification: string; present_under: string[]; absent_under: string[]; share_by_source: Record<string, number>; calibration_contrast: { variable: string; shift_where_absent: number; shift_where_present: number }[] }[]
+  agreement: { n_stakeholders: number; within_reading_mean_modal_share: number | null; between_readings_same_solution_share: number | null; between_readings_mean_similarity: number | null }
+  mechanical_matches_analyst_share: number | null
+}
+export type SavedInterpretation = { kind: string; policy: string; source: 'rules' | 'ai' | 'edited'; narrative: Narrative; notes: string; saved_at: string }
 export type Role = { name: string; description: string; relevance: string; ai?: boolean }
 export type RunReq = { project_id: string; role_set_hash: string; arms: { roles: string[]; generic: boolean; mechanical: boolean }; reps: number; provider: string; model: string; temperature: number | null; tolerance: number; spend_cap: number | null; price_in: number | null; price_out: number | null }
 export type RunRow = { run_id: number; arm: string; rep: number; status: string; mechanical_id: string | null; attempts: number; anchors: Record<string, Record<string, number>> | null; solutions: Record<'complex' | 'parsimonious' | 'intermediate', string[][]> | null }
@@ -67,6 +78,15 @@ export const api = {
   estimate: (req: RunReq) => j<{ llm_calls_min: number; llm_calls_max: number; mechanical_runs: number; approx_input_tokens_per_call: number; approx_output_tokens_per_call: number; cost_usd_max: number | null }>('/api/runs/estimate', req),
   start: (req: RunReq, key: string, workspace = '') => j<{ run_config_id: number }>('/api/runs', req, { ...(key ? { 'X-Provider-Key': key } : {}), ...(workspace ? { 'X-Provider-Workspace': workspace } : {}) }),
   cancel: (id: number) => j<unknown>(`/api/runs/${id}/cancel`, {}),
+  interpretation: (id: number, kind: string, policy: string) => j<{ facts: Facts; narrative: Narrative; saved: SavedInterpretation | null }>(`/api/runs/${id}/interpretation?kind=${kind}&policy=${policy}`),
+  interpretationPreview: (id: number, body: { kind: string; policy: string; provider: string; model: string; temperature: number | null }) => j<{ prompt: string | null; scripted: boolean; sent: string }>(`/api/runs/${id}/interpretation/preview`, body),
+  interpretationAi: (id: number, body: { kind: string; policy: string; provider: string; model: string; temperature: number | null }, key: string, workspace: string) =>
+    j<{ interpretation: Narrative; ai_generated: boolean; provider: string; model_id: string | null; notice: string }>(`/api/runs/${id}/interpretation/ai`, body, { ...(key ? { 'X-Provider-Key': key } : {}), ...(workspace ? { 'X-Provider-Workspace': workspace } : {}) }),
+  saveInterpretation: async (id: number, body: { kind: string; policy: string; source: string; narrative: Narrative; notes: string }): Promise<SavedInterpretation> => {
+    const r = await fetch(`/api/runs/${id}/interpretation`, { method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-Session': getSid() }, body: JSON.stringify(body) })
+    if (!r.ok) throw new Error((await r.json().catch(() => ({ detail: r.statusText }))).detail ?? r.statusText)
+    return r.json()
+  },
   results: (id: number) => j<Results>(`/api/runs/${id}/results`),
 }
 

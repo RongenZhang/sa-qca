@@ -42,7 +42,7 @@ def init_db(url: str | None = None) -> None:
 
     have = {c["name"] for c in inspect(_engine).get_columns("run_config")}
     with _engine.begin() as conn:  # older dev databases: add columns introduced later
-        for col, ddl in (("project_id", "VARCHAR DEFAULT 'demo'"), ("project_snapshot", "JSON"), ("role_approval", "JSON"), ("owner", "VARCHAR")):
+        for col, ddl in (("project_id", "VARCHAR DEFAULT 'demo'"), ("project_snapshot", "JSON"), ("role_approval", "JSON"), ("owner", "VARCHAR"), ("interpretation", "JSON")):
             if col not in have:
                 conn.execute(text(f"ALTER TABLE run_config ADD COLUMN {col} {ddl}"))
     have_p = {c["name"] for c in inspect(_engine).get_columns("project")}
@@ -240,6 +240,46 @@ def _reference_decision(demo: dict[str, Any]) -> dict[str, Any]:
                             "pri_rationale": "analyst's original cutoff" if tt.get("pri_threshold") is not None else None}}
 
 
+def interpretation_context(cfg_id: int, kind: str, policy: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The computed facts of a run, and the researcher's own text that gives them meaning."""
+    from app.engine.interpret import build_facts
+
+    res = results(cfg_id)
+    facts = build_facts(res, kind, policy)
+    snap = res["project"]
+    st = snap.get("study") or {}
+    outcome = st.get("outcome") or {}
+    out_var = next((v for v in snap["variables"] if v["role"] == "outcome"), None)
+    with session() as s:
+        cfg = s.get(RunConfig, cfg_id)
+        roles = list(cfg.roles or []) if cfg else []
+    inputs = {
+        "phenomenon": st.get("phenomenon") or snap.get("case_description", ""),
+        "outcome": {"name": outcome.get("name") or (out_var["name"] if out_var else ""),
+                    "description": outcome.get("description") or (out_var["construct_definition"] if out_var else "")},
+        "stakeholders": [{"name": r["name"], "description": r.get("description", "")} for r in roles],
+        "conditions": [{"name": v["name"], "definition": v["construct_definition"]} for v in snap["variables"] if v["role"] == "condition"],
+        "facts": facts,
+    }
+    return facts, inputs
+
+
+def save_interpretation(cfg_id: int, rec: dict[str, Any]) -> dict[str, Any]:
+    with session() as s:
+        cfg = s.get(RunConfig, cfg_id)
+        if cfg is None:
+            raise KeyError(cfg_id)
+        cfg.interpretation = {**rec, "saved_at": _iso(datetime.now(UTC))}
+        s.commit()
+        return dict(cfg.interpretation)
+
+
+def saved_interpretation(cfg_id: int) -> dict[str, Any] | None:
+    with session() as s:
+        cfg = s.get(RunConfig, cfg_id)
+        return dict(cfg.interpretation) if cfg and cfg.interpretation else None
+
+
 def mechanical_configs(project: dict[str, Any]) -> list[MechanicalConfig]:
     """The mechanical (Skaaning-style) perturbations of the analyst's own specification. When every condition is already
     calibrated, only the outcome can be perturbed, so it is."""
@@ -289,7 +329,9 @@ def results(cfg_id: int) -> dict[str, Any]:
             sols = (rr.r_output.get("solutions") or {}) if rr else {}
             out.append({
                 "run_id": r.id, "arm": r.arm, "rep": r.rep_index, "status": r.status, "mechanical_id": r.mechanical_id,
-                "attempts": len(r.attempts), "anchors": {n: _values(b) for n, b in
+                "attempts": len(r.attempts),
+                "cutoffs": ({k: j.decision["truth_table"].get(k) for k in ("consistency_threshold", "frequency_threshold", "pri_threshold")} if j else None),
+                "anchors": {n: _values(b) for n, b in
                                                           {**(j.decision["conditions"]), "outcome": j.decision["outcome"]}.items()} if j else None,
                 "solutions": {k: _models(sols.get(k)) for k in ("complex", "parsimonious", "intermediate")} if rr else None,
             })
